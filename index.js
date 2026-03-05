@@ -192,6 +192,27 @@ app.put('/api/tickets/:id', async (req, res) => {
         res.status(500).json({ error: "Error al actualizar el ticket" });
     }
 });
+// ==========================================
+// NUEVA RUTA: ASIGNAR TÉCNICO AL TICKET (PUT)
+// ==========================================
+app.put('/api/tickets/asignar/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { tecnico } = req.body;
+
+        const query = `
+      UPDATE tickets 
+      SET tecnico_asignado = $1 
+      WHERE id = $2 
+      RETURNING *;
+    `;
+        const resultado = await pool.query(query, [tecnico, id]);
+        res.json(resultado.rows[0]);
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ error: "Error al asignar técnico" });
+    }
+});
 
 app.delete('/api/tickets/:id', async (req, res) => {
     try {
