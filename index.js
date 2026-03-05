@@ -191,13 +191,13 @@ app.put('/api/tickets/:id', async (req, res) => {
 app.delete('/api/tickets/:id', async (req, res) => {
     try {
         const { id } = req.params;
-        await pool.query('DELETE FROM tickets WHERE id = $1');
-        res.json({ mensaje: "Ticket eliminado correctamente" });
+        await pool.query('DELETE FROM tickets WHERE id = $1', [id]);
+        res.json({ mensaje: 'Ticket eliminado correctamente' });
     } catch (error) {
-        res.status(500).json({ error: "Error al eliminar el ticket" });
+        console.error("Error al eliminar:", error);
+        res.status(500).json({ error: "Error interno del servidor" });
     }
 });
-
 app.listen(PORT, () => {
     console.log(`Servidor corriendo en http://localhost:${PORT}`);
 });
