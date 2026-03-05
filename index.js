@@ -225,6 +225,42 @@ app.delete('/api/tickets/:id', async (req, res) => {
     }
 });
 
+// ==========================================
+// NUEVAS RUTAS: HISTORIAL DE COMENTARIOS
+// ==========================================
+
+// 1. Obtener todos los comentarios de un ticket específico
+app.get('/api/tickets/:id/comentarios', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const query = 'SELECT * FROM comentarios WHERE ticket_id = $1 ORDER BY fecha ASC';
+        const resultado = await pool.query(query, [id]);
+        res.json(resultado.rows);
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ error: "Error al cargar los comentarios" });
+    }
+});
+
+// 2. Agregar un nuevo comentario a un ticket
+app.post('/api/tickets/:id/comentarios', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { autor, texto } = req.body;
+
+        const query = `
+      INSERT INTO comentarios (ticket_id, autor, texto) 
+      VALUES ($1, $2, $3) 
+      RETURNING *;
+    `;
+        const resultado = await pool.query(query, [id, autor, texto]);
+        res.json(resultado.rows[0]);
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ error: "Error al guardar el comentario" });
+    }
+});
+
 app.listen(PORT, () => {
     console.log(`Servidor corriendo en http://localhost:${PORT}`);
 });
