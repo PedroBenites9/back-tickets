@@ -153,7 +153,29 @@ app.post('/api/tickets', async (req, res) => {
         res.status(500).json({ error: "Error al crear el ticket" });
     }
 });
+// ==========================================
+// NUEVA RUTA: EDICIÓN COMPLETA DEL TICKET (PUT)
+// ==========================================
+app.put('/api/tickets/editar/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { asunto, categoria, prioridad, descripcion } = req.body;
 
+        const query = `
+      UPDATE tickets 
+      SET asunto = $1, categoria = $2, prioridad = $3, descripcion = $4 
+      WHERE id = $5 
+      RETURNING *;
+    `;
+        const valores = [asunto, categoria, prioridad, descripcion, id];
+
+        const resultado = await pool.query(query, valores);
+        res.json(resultado.rows[0]);
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ error: "Error al editar el ticket" });
+    }
+});
 app.put('/api/tickets/:id', async (req, res) => {
     try {
         const { id } = req.params;
