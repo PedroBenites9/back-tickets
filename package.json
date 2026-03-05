@@ -2,14 +2,22 @@
   "name": "back-tickets",
   "version": "1.0.0",
   "description": "",
-  "main": "index.js",
+  "keywords": [],
+  "homepage": "https://github.com/PedroBenites9/back-tickets#readme",
+  "bugs": {
+    "url": "https://github.com/PedroBenites9/back-tickets/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/PedroBenites9/back-tickets.git"
+  },
+  "license": "ISC",
+  "author": "",
   "type": "module",
+  "main": "index.js",
   "scripts": {
     "dev": "nodemon index.js"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
   "dependencies": {
     "bcrypt": "^6.0.0",
     "cors": "^2.8.5",

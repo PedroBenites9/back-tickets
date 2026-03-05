@@ -96,37 +96,42 @@ app.post('/api/login', async (req, res) => {
     try {
         const { email, password } = req.body;
 
-        // 1. Buscamos al usuario por su email
-        const resultado = await pool.query('SELECT * FROM usuarios WHERE email = $1', [email]);
+        // 1. NUEVO: Asegúrate de pedir la columna "rol" en el SELECT
+        const query = 'SELECT id, nombre, email, password, rol FROM usuarios WHERE email = $1';
+        const resultado = await pool.query(query, [email]);
+
         if (resultado.rows.length === 0) {
-            return res.status(401).json({ error: "Correo o contraseña incorrectos" });
+            return res.status(401).json({ error: "Usuario no encontrado" });
         }
 
         const usuario = resultado.rows[0];
-
-        // 2. Comparamos la contraseña que escribió con la encriptada de la DB
         const passwordValida = await bcrypt.compare(password, usuario.password);
+
         if (!passwordValida) {
-            return res.status(401).json({ error: "Correo o contraseña incorrectos" });
+            return res.status(401).json({ error: "Contraseña incorrecta" });
         }
 
-        // 3. Si todo es correcto, creamos el "Pase VIP" (Token JWT)
+        // 2. NUEVO: Metemos el rol dentro del pase VIP (Token)
         const token = jwt.sign(
-            { id: usuario.id, nombre: usuario.nombre, email: usuario.email },
+            { id: usuario.id, rol: usuario.rol },
             process.env.JWT_SECRET,
-            { expiresIn: '2h' } // El token caduca en 2 horas
+            { expiresIn: '2h' }
         );
 
-        // 4. Se lo enviamos al Front-End
+        // 3. NUEVO: Le enviamos el rol a React para que sepa qué botones mostrar
         res.json({
             mensaje: "Login exitoso",
-            token: token,
-            usuario: { id: usuario.id, nombre: usuario.nombre, email: usuario.email }
+            token,
+            usuario: {
+                id: usuario.id,
+                nombre: usuario.nombre,
+                rol: usuario.rol
+            }
         });
 
     } catch (error) {
         console.error(error);
-        res.status(500).json({ error: "Error interno al iniciar sesión" });
+        res.status(500).json({ error: "Error en el servidor al iniciar sesión" });
     }
 });
 
@@ -198,6 +203,7 @@ app.delete('/api/tickets/:id', async (req, res) => {
         res.status(500).json({ error: "Error interno del servidor" });
     }
 });
+
 app.listen(PORT, () => {
     console.log(`Servidor corriendo en http://localhost:${PORT}`);
 });
