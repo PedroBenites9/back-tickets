@@ -366,36 +366,48 @@ app.post('/api/tareas', async (req, res) => {
     }
 });
 
-// 3. Completar rutina y reprogramar automáticamente para mañana
+
+// Completar rutina, reprogramar y GUARDAR EN HISTORIAL
 app.put('/api/tareas/:id/completar', async (req, res) => {
     try {
         const { id } = req.params;
+        const { usuario } = req.body; // NUEVO: Recibimos quién hizo la tarea
 
-        // Primero: Buscamos qué hora configuraste originalmente (ej: las 09:00 AM)
-        const tareaActual = await pool.query('SELECT hora_programada FROM tareas_diarias WHERE id = $1', [id]);
+        // 1. Obtenemos los datos de la tarea actual
+        const tareaActual = await pool.query('SELECT titulo, hora_programada FROM tareas_diarias WHERE id = $1', [id]);
+        if (tareaActual.rows.length === 0) return res.status(404).json({ error: "Tarea no encontrada" });
 
-        if (tareaActual.rows.length === 0) {
-            return res.status(404).json({ error: "Tarea no encontrada" });
-        }
-
+        const titulo = tareaActual.rows[0].titulo;
         const hora = tareaActual.rows[0].hora_programada;
 
-        // Segundo: Le decimos a PostgreSQL que le sume 1 día a la fecha actual y le pegue tu hora
-        const query = `
+        // 2. Reprogramamos la tarea principal para mañana
+        const queryReprogramar = `
       UPDATE tareas_diarias 
-      SET 
-        estado = 'Pendiente', 
-        ultima_vez_completada = CURRENT_TIMESTAMP,
-        proxima_ejecucion = (CURRENT_DATE + INTERVAL '1 day') + $1::time
-      WHERE id = $2 
-      RETURNING *;
+      SET estado = 'Pendiente', ultima_vez_completada = CURRENT_TIMESTAMP, proxima_ejecucion = (CURRENT_DATE + INTERVAL '1 day') + $1::time
+      WHERE id = $2 RETURNING *;
     `;
+        const resultado = await pool.query(queryReprogramar, [hora, id]);
 
-        const resultado = await pool.query(query, [hora, id]);
+        // 3. NUEVO: Guardamos el registro en la bitácora histórica
+        await pool.query(
+            'INSERT INTO historial_tareas (tarea_id, titulo_tarea, usuario_que_completo) VALUES ($1, $2, $3)',
+            [id, titulo, usuario || 'Sistema']
+        );
+
         res.json(resultado.rows[0]);
     } catch (error) {
-        console.error("Error en PUT /api/tareas/:id/completar:", error);
+        console.error("Error en completar tarea:", error);
         res.status(500).json({ error: "Error al reprogramar la tarea" });
+    }
+});
+// NUEVO: Obtener todo el historial para exportar a Excel
+app.get('/api/tareas/historial', async (req, res) => {
+    try {
+        const query = 'SELECT * FROM historial_tareas ORDER BY fecha_completada DESC';
+        const resultado = await pool.query(query);
+        res.json(resultado.rows);
+    } catch (error) {
+        res.status(500).json({ error: "Error al obtener el historial" });
     }
 });
 
