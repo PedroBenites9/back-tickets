@@ -260,6 +260,36 @@ app.post('/api/tickets/:id/comentarios', async (req, res) => {
         res.status(500).json({ error: "Error al guardar el comentario" });
     }
 });
+// ==========================================
+// NUEVAS RUTAS: GESTIÓN DE USUARIOS (ADMIN)
+// ==========================================
+
+// 1. Obtener la lista de todos los usuarios (sin contraseñas por seguridad)
+app.get('/api/usuarios', async (req, res) => {
+    try {
+        const query = 'SELECT id, nombre, email, rol FROM usuarios ORDER BY nombre ASC';
+        const resultado = await pool.query(query);
+        res.json(resultado.rows);
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ error: "Error al obtener la lista de usuarios" });
+    }
+});
+
+// 2. Cambiar el rol de un usuario específico
+app.put('/api/usuarios/:id/rol', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { rol } = req.body;
+
+        const query = 'UPDATE usuarios SET rol = $1 WHERE id = $2 RETURNING id, nombre, email, rol';
+        const resultado = await pool.query(query, [rol, id]);
+        res.json(resultado.rows[0]);
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ error: "Error al actualizar el rol del usuario" });
+    }
+});
 
 app.listen(PORT, () => {
     console.log(`Servidor corriendo en http://localhost:${PORT}`);
