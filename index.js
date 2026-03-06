@@ -138,15 +138,26 @@ app.post('/api/login', async (req, res) => {
 // ==========================================
 // RUTAS DE TICKETS (Quedan exactamente igual)
 // ==========================================
+// Obtener todos los tickets (con cierre automático de 5 días)
 app.get('/api/tickets', async (req, res) => {
     try {
-        const resultado = await pool.query('SELECT * FROM tickets ORDER BY fecha_creacion DESC');
+        // 1. Truco Mágico: Auto-Cerrar tickets que llevan más de 5 días "Resueltos"
+        await pool.query(`
+      UPDATE tickets 
+      SET estado = 'Cerrado Definitivo' 
+      WHERE estado = 'Resuelto' 
+      AND fecha_finalizado <= NOW() - INTERVAL '5 days'
+    `);
+
+        // 2. Traer la lista actualizada
+        const query = 'SELECT * FROM tickets ORDER BY id DESC';
+        const resultado = await pool.query(query);
         res.json(resultado.rows);
     } catch (error) {
+        console.error(error);
         res.status(500).json({ error: "Error al obtener los tickets" });
     }
 });
-
 app.post('/api/tickets', async (req, res) => {
     try {
         const { asunto, categoria, prioridad, descripcion } = req.body;
@@ -156,6 +167,28 @@ app.post('/api/tickets', async (req, res) => {
         res.status(201).json(resultado.rows[0]);
     } catch (error) {
         res.status(500).json({ error: "Error al crear el ticket" });
+    }
+});
+// Cambiar solo el estado y registrar la fecha de finalización
+app.put('/api/tickets/:id/estado', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { estado } = req.body;
+        let query = '';
+
+        if (estado === 'Resuelto') {
+            // Si se finaliza, guardamos la fecha y hora actual
+            query = "UPDATE tickets SET estado = $1, fecha_finalizado = CURRENT_TIMESTAMP WHERE id = $2 RETURNING *";
+        } else {
+            // Si se reabre, limpiamos la fecha de finalización
+            query = "UPDATE tickets SET estado = $1, fecha_finalizado = NULL WHERE id = $2 RETURNING *";
+        }
+
+        const resultado = await pool.query(query, [estado, id]);
+        res.json(resultado.rows[0]);
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ error: "Error al cambiar el estado" });
     }
 });
 // ==========================================
