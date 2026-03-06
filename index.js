@@ -332,6 +332,72 @@ app.put('/api/usuarios/:id/rol', async (req, res) => {
         res.status(500).json({ error: "Error al actualizar el rol del usuario" });
     }
 });
+// ==========================================
+// NUEVAS RUTAS: TAREAS RECURRENTES (PREVENTIVAS)
+// ==========================================
+
+// 1. Obtener todas las tareas programadas
+app.get('/api/tareas', async (req, res) => {
+    try {
+        // Las ordenamos para que las que están por vencer (o vencidas) salgan primero
+        const query = 'SELECT * FROM tareas_diarias ORDER BY proxima_ejecucion ASC';
+        const resultado = await pool.query(query);
+        res.json(resultado.rows);
+    } catch (error) {
+        console.error("Error en GET /api/tareas:", error);
+        res.status(500).json({ error: "Error al obtener las tareas diarias" });
+    }
+});
+
+// 2. Crear una nueva rutina de mantenimiento
+app.post('/api/tareas', async (req, res) => {
+    try {
+        const { titulo, categoria, frecuencia, hora_programada, proxima_ejecucion } = req.body;
+        const query = `
+      INSERT INTO tareas_diarias (titulo, categoria, frecuencia, hora_programada, proxima_ejecucion) 
+      VALUES ($1, $2, $3, $4, $5) 
+      RETURNING *;
+    `;
+        const resultado = await pool.query(query, [titulo, categoria, frecuencia, hora_programada, proxima_ejecucion]);
+        res.json(resultado.rows[0]);
+    } catch (error) {
+        console.error("Error en POST /api/tareas:", error);
+        res.status(500).json({ error: "Error al crear la tarea" });
+    }
+});
+
+// 3. Completar rutina y reprogramar automáticamente para mañana
+app.put('/api/tareas/:id/completar', async (req, res) => {
+    try {
+        const { id } = req.params;
+
+        // Primero: Buscamos qué hora configuraste originalmente (ej: las 09:00 AM)
+        const tareaActual = await pool.query('SELECT hora_programada FROM tareas_diarias WHERE id = $1', [id]);
+
+        if (tareaActual.rows.length === 0) {
+            return res.status(404).json({ error: "Tarea no encontrada" });
+        }
+
+        const hora = tareaActual.rows[0].hora_programada;
+
+        // Segundo: Le decimos a PostgreSQL que le sume 1 día a la fecha actual y le pegue tu hora
+        const query = `
+      UPDATE tareas_diarias 
+      SET 
+        estado = 'Pendiente', 
+        ultima_vez_completada = CURRENT_TIMESTAMP,
+        proxima_ejecucion = (CURRENT_DATE + INTERVAL '1 day') + $1::time
+      WHERE id = $2 
+      RETURNING *;
+    `;
+
+        const resultado = await pool.query(query, [hora, id]);
+        res.json(resultado.rows[0]);
+    } catch (error) {
+        console.error("Error en PUT /api/tareas/:id/completar:", error);
+        res.status(500).json({ error: "Error al reprogramar la tarea" });
+    }
+});
 
 app.listen(PORT, () => {
     console.log(`Servidor corriendo en http://localhost:${PORT}`);
