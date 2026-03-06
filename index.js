@@ -158,14 +158,22 @@ app.get('/api/tickets', async (req, res) => {
         res.status(500).json({ error: "Error al obtener los tickets" });
     }
 });
+// Crear un nuevo ticket (Actualizado con tipo_origen)
 app.post('/api/tickets', async (req, res) => {
     try {
-        const { asunto, categoria, prioridad, descripcion } = req.body;
-        const codigo = "TK-" + Math.floor(Math.random() * 9000 + 1000);
-        const query = 'INSERT INTO tickets (codigo, asunto, categoria, prioridad, descripcion) VALUES ($1, $2, $3, $4, $5) RETURNING *;';
-        const resultado = await pool.query(query, [codigo, asunto, categoria, prioridad, descripcion]);
-        res.status(201).json(resultado.rows[0]);
+        const { asunto, categoria, prioridad, descripcion, tipo_origen } = req.body;
+
+        const query = `
+      INSERT INTO tickets (codigo, asunto, categoria, prioridad, descripcion, tipo_origen) 
+      VALUES ('TK-' || floor(random() * 10000 + 1000), $1, $2, $3, $4, $5) 
+      RETURNING *;
+    `;
+        const valores = [asunto, categoria, prioridad, descripcion, tipo_origen];
+
+        const resultado = await pool.query(query, valores);
+        res.json(resultado.rows[0]);
     } catch (error) {
+        console.error(error);
         res.status(500).json({ error: "Error al crear el ticket" });
     }
 });
@@ -194,18 +202,19 @@ app.put('/api/tickets/:id/estado', async (req, res) => {
 // ==========================================
 // NUEVA RUTA: EDICIÓN COMPLETA DEL TICKET (PUT)
 // ==========================================
+// Editar un ticket completo (Actualizado con tipo_origen)
 app.put('/api/tickets/editar/:id', async (req, res) => {
     try {
         const { id } = req.params;
-        const { asunto, categoria, prioridad, descripcion } = req.body;
+        const { asunto, categoria, prioridad, descripcion, tipo_origen } = req.body;
 
         const query = `
       UPDATE tickets 
-      SET asunto = $1, categoria = $2, prioridad = $3, descripcion = $4 
-      WHERE id = $5 
+      SET asunto = $1, categoria = $2, prioridad = $3, descripcion = $4, tipo_origen = $5 
+      WHERE id = $6 
       RETURNING *;
     `;
-        const valores = [asunto, categoria, prioridad, descripcion, id];
+        const valores = [asunto, categoria, prioridad, descripcion, tipo_origen, id];
 
         const resultado = await pool.query(query, valores);
         res.json(resultado.rows[0]);
