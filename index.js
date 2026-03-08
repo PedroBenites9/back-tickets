@@ -4,11 +4,19 @@ import pg from 'pg';
 import dotenv from 'dotenv';
 import bcrypt from 'bcrypt'; // NUEVO: Para encriptar contraseñas
 import jwt from 'jsonwebtoken'; // NUEVO: Para crear el token de sesión
+import http from 'http'; // NUEVO: Módulo nativo de Node
+import { Server } from 'socket.io'; // NUEVO: El motor de WebSockets
 
 dotenv.config();
 
 const app = express();
 const PORT = 3000;
+
+// NUEVO: Envolvemos Express con el servidor HTTP y Socket.io
+const server = http.createServer(app);
+const io = new Server(server, {
+    cors: { origin: "*" } // Permite que cualquier React se conecte al túnel
+});
 
 app.use(cors());
 app.use(express.json());
@@ -17,6 +25,11 @@ const { Pool } = pg;
 const pool = new Pool({
     connectionString: process.env.DATABASE_URL,
     ssl: { rejectUnauthorized: false }
+});
+
+// NUEVO: Verificamos cuando alguien se conecta al túnel
+io.on('connection', (socket) => {
+    console.log('🟢 Un usuario se conectó a WebSockets');
 });
 
 // ==========================================
@@ -171,7 +184,11 @@ app.post('/api/tickets', async (req, res) => {
       VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *;
     `;
         const resultado = await pool.query(query, [codigo, asunto, categoria, prioridad, descripcion, tipo_origen, solicitante]);
-        res.json(resultado.rows[0]);
+        const ticketNuevo = resultado.rows[0];
+
+        io.emit('ticketCreado', ticketNuevo); // 📢 ¡Avisamos a todos!
+
+        res.json(ticketNuevo);
     } catch (error) {
         console.error("Error exacto en la BD:", error);
         res.status(500).json({ error: "Error al crear ticket" });
@@ -193,7 +210,11 @@ app.put('/api/tickets/:id/estado', async (req, res) => {
         }
 
         const resultado = await pool.query(query, [estado, id]);
-        res.json(resultado.rows[0]);
+        const ticketNuevo = resultado.rows[0];
+
+        io.emit('ticketCreado', ticketNuevo); // 📢 ¡Avisamos a todos!
+
+        res.json(ticketNuevo);
     } catch (error) {
         console.error(error);
         res.status(500).json({ error: "Error al cambiar el estado" });
@@ -217,7 +238,11 @@ app.put('/api/tickets/editar/:id', async (req, res) => {
         const valores = [asunto, categoria, prioridad, descripcion, tipo_origen, id];
 
         const resultado = await pool.query(query, valores);
-        res.json(resultado.rows[0]);
+        const ticketNuevo = resultado.rows[0];
+
+        io.emit('ticketCreado', ticketNuevo); // 📢 ¡Avisamos a todos!
+
+        res.json(ticketNuevo);
     } catch (error) {
         console.error(error);
         res.status(500).json({ error: "Error al editar el ticket" });
@@ -229,7 +254,11 @@ app.put('/api/tickets/:id', async (req, res) => {
         const { estado } = req.body;
         const query = 'UPDATE tickets SET estado = $1 WHERE id = $2 RETURNING *';
         const resultado = await pool.query(query, [estado, id]);
-        res.json(resultado.rows[0]);
+        const ticketNuevo = resultado.rows[0];
+
+        io.emit('ticketCreado', ticketNuevo); // 📢 ¡Avisamos a todos!
+
+        res.json(ticketNuevo);
     } catch (error) {
         res.status(500).json({ error: "Error al actualizar el ticket" });
     }
@@ -249,7 +278,11 @@ app.put('/api/tickets/asignar/:id', async (req, res) => {
       RETURNING *;
     `;
         const resultado = await pool.query(query, [tecnico, id]);
-        res.json(resultado.rows[0]);
+        const ticketNuevo = resultado.rows[0];
+
+        io.emit('ticketCreado', ticketNuevo); // 📢 ¡Avisamos a todos!
+
+        res.json(ticketNuevo);
     } catch (error) {
         console.error(error);
         res.status(500).json({ error: "Error al asignar técnico" });
@@ -411,6 +444,7 @@ app.get('/api/tareas/historial', async (req, res) => {
     }
 });
 
-app.listen(PORT, () => {
-    console.log(`Servidor corriendo en http://localhost:${PORT}`);
+// Antes decía app.listen... ahora es server.listen
+server.listen(PORT, () => {
+    console.log(`🚀 Servidor y WebSockets corriendo en el puerto ${PORT}`);
 });
