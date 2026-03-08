@@ -161,20 +161,21 @@ app.get('/api/tickets', async (req, res) => {
 // Crear un nuevo ticket (Actualizado con tipo_origen)
 app.post('/api/tickets', async (req, res) => {
     try {
-        const { asunto, categoria, prioridad, descripcion, tipo_origen } = req.body;
+        // NUEVO: Agregamos "solicitante" a lo que recibimos de React
+        const { asunto, categoria, tipo_origen, solicitante } = req.body;
 
+        // Generar código único (tu lógica actual)
+        const codigo = `TK-${Math.floor(1000 + Math.random() * 9000)}`;
+
+        // NUEVO: Lo insertamos en la base de datos
         const query = `
-      INSERT INTO tickets (codigo, asunto, categoria, prioridad, descripcion, tipo_origen) 
-      VALUES ('TK-' || floor(random() * 10000 + 1000), $1, $2, $3, $4, $5) 
-      RETURNING *;
+      INSERT INTO tickets (codigo, asunto, categoria, tipo_origen, solicitante) 
+      VALUES ($1, $2, $3, $4, $5) RETURNING *;
     `;
-        const valores = [asunto, categoria, prioridad, descripcion, tipo_origen];
-
-        const resultado = await pool.query(query, valores);
+        const resultado = await pool.query(query, [codigo, asunto, categoria, tipo_origen, solicitante]);
         res.json(resultado.rows[0]);
     } catch (error) {
-        console.error(error);
-        res.status(500).json({ error: "Error al crear el ticket" });
+        res.status(500).json({ error: "Error al crear ticket" });
     }
 });
 // Cambiar solo el estado y registrar la fecha de finalización
