@@ -158,23 +158,22 @@ app.get('/api/tickets', async (req, res) => {
         res.status(500).json({ error: "Error al obtener los tickets" });
     }
 });
-// Crear un nuevo ticket (Actualizado con tipo_origen)
+// Crear un nuevo ticket (CORREGIDO: Ahora incluye prioridad y descripcion)
 app.post('/api/tickets', async (req, res) => {
     try {
-        // NUEVO: Agregamos "solicitante" a lo que recibimos de React
-        const { asunto, categoria, tipo_origen, solicitante } = req.body;
+        // Pedimos TODOS los datos que la base de datos exige
+        const { asunto, categoria, prioridad, descripcion, tipo_origen, solicitante } = req.body;
 
-        // Generar código único (tu lógica actual)
         const codigo = `TK-${Math.floor(1000 + Math.random() * 9000)}`;
 
-        // NUEVO: Lo insertamos en la base de datos
         const query = `
-      INSERT INTO tickets (codigo, asunto, categoria, tipo_origen, solicitante) 
-      VALUES ($1, $2, $3, $4, $5) RETURNING *;
+      INSERT INTO tickets (codigo, asunto, categoria, prioridad, descripcion, tipo_origen, solicitante) 
+      VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *;
     `;
-        const resultado = await pool.query(query, [codigo, asunto, categoria, tipo_origen, solicitante]);
+        const resultado = await pool.query(query, [codigo, asunto, categoria, prioridad, descripcion, tipo_origen, solicitante]);
         res.json(resultado.rows[0]);
     } catch (error) {
+        console.error("Error exacto en la BD:", error);
         res.status(500).json({ error: "Error al crear ticket" });
     }
 });
