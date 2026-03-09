@@ -392,7 +392,12 @@ app.post('/api/tareas', async (req, res) => {
       RETURNING *;
     `;
         const resultado = await pool.query(query, [titulo, categoria, frecuencia, hora_programada, proxima_ejecucion]);
-        res.json(resultado.rows[0]);
+        const tareaCreada = resultado.rows[0];
+
+        // 📢 AVISAMOS A TODOS QUE HAY UNA NUEVA RUTINA
+        io.emit('tareaCreada', tareaCreada);
+
+        res.json(tareaCreada);
     } catch (error) {
         console.error("Error en POST /api/tareas:", error);
         res.status(500).json({ error: "Error al crear la tarea" });
@@ -427,7 +432,12 @@ app.put('/api/tareas/:id/completar', async (req, res) => {
             [id, titulo, usuario || 'Sistema']
         );
 
-        res.json(resultado.rows[0]);
+        const tareaActualizada = resultado.rows[0];
+
+        // 📢 AVISAMOS A TODOS QUE ALGUIEN COMPLETÓ UNA TAREA
+        io.emit('tareaCompletada', tareaActualizada);
+
+        res.json(tareaActualizada);
     } catch (error) {
         console.error("Error en completar tarea:", error);
         res.status(500).json({ error: "Error al reprogramar la tarea" });
