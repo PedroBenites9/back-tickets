@@ -74,7 +74,7 @@ app.get('/api/instalar', async (req, res) => {
 // ==========================================
 app.post('/api/registro', async (req, res) => {
     try {
-        const { nombre, email, password } = req.body;
+        const { nombre, email, password, area } = req.body;
 
         // 1. Verificamos si el correo ya existe en la base de datos
         const usuarioExistente = await pool.query('SELECT * FROM usuarios WHERE email = $1', [email]);
@@ -88,12 +88,11 @@ app.post('/api/registro', async (req, res) => {
 
         // 3. Guardamos al usuario en PostgreSQL con la clave encriptada
         const query = `
-      INSERT INTO usuarios (nombre, email, password)
-      VALUES ($1, $2, $3)
-      RETURNING id, nombre, email; 
-    `;
-        // Fíjate que devolvemos todo menos la contraseña por seguridad
-        const nuevoUsuario = await pool.query(query, [nombre, email, passwordEncriptada]);
+          INSERT INTO usuarios (nombre, email, password, area)
+          VALUES ($1, $2, $3, $4)
+          RETURNING id, nombre, email, area; 
+        `;
+        const nuevoUsuario = await pool.query(query, [nombre, email, passwordEncriptada, area || 'Sin Asignar']);
 
         res.status(201).json({ mensaje: "Usuario creado exitosamente", usuario: nuevoUsuario.rows[0] });
     } catch (error) {
@@ -110,7 +109,7 @@ app.post('/api/login', async (req, res) => {
         const { email, password } = req.body;
 
         // 1. NUEVO: Asegúrate de pedir la columna "rol" en el SELECT
-        const query = 'SELECT id, nombre, email, password, rol FROM usuarios WHERE email = $1';
+        const query = 'SELECT id, nombre, email, password, rol, area FROM usuarios WHERE email = $1';
         const resultado = await pool.query(query, [email]);
 
         if (resultado.rows.length === 0) {
@@ -138,7 +137,8 @@ app.post('/api/login', async (req, res) => {
             usuario: {
                 id: usuario.id,
                 nombre: usuario.nombre,
-                rol: usuario.rol
+                rol: usuario.rol,
+                area: usuario.area
             }
         });
 
@@ -171,19 +171,26 @@ app.get('/api/tickets', async (req, res) => {
         res.status(500).json({ error: "Error al obtener los tickets" });
     }
 });
-// Crear un nuevo ticket (CORREGIDO: Ahora incluye prioridad y descripcion)
+
+// Crear un nuevo ticket (CORREGIDO CON SECUENCIA TK-0001)
 app.post('/api/tickets', async (req, res) => {
     try {
-        // Pedimos TODOS los datos que la base de datos exige
         const { asunto, categoria, prioridad, descripcion, tipo_origen, solicitante } = req.body;
 
-        const codigo = `TK-${Math.floor(1000 + Math.random() * 9000)}`;
+        // 1. Le pedimos a PostgreSQL el siguiente ID de forma 100% segura (evita choques)
+        const seqResult = await pool.query("SELECT nextval('tickets_id_seq') AS next_id");
+        const nextId = seqResult.rows[0].next_id;
 
+        // 2. Formateamos el número para que tenga 4 ceros (Ej: TK-0007)
+        const codigo = `TK-${String(nextId).padStart(4, '0')}`;
+
+        // 3. Insertamos el ticket forzando ese ID y ese Código
         const query = `
-      INSERT INTO tickets (codigo, asunto, categoria, prioridad, descripcion, tipo_origen, solicitante) 
-      VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *;
-    `;
-        const resultado = await pool.query(query, [codigo, asunto, categoria, prioridad, descripcion, tipo_origen, solicitante]);
+          INSERT INTO tickets (id, codigo, asunto, categoria, prioridad, descripcion, tipo_origen, solicitante) 
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *;
+        `;
+
+        const resultado = await pool.query(query, [nextId, codigo, asunto, categoria, prioridad, descripcion, tipo_origen, solicitante]);
         const ticketNuevo = resultado.rows[0];
 
         io.emit('ticketCreado', ticketNuevo); // 📢 ¡Avisamos a todos!
@@ -191,9 +198,10 @@ app.post('/api/tickets', async (req, res) => {
         res.json(ticketNuevo);
     } catch (error) {
         console.error("Error exacto en la BD:", error);
-        res.status(500).json({ error: "Error al crear ticket" });
+        res.status(500).json({ error: "Error al crear ticket secuencial" });
     }
 });
+
 // Cambiar solo el estado y registrar la fecha de finalización
 app.put('/api/tickets/:id/estado', async (req, res) => {
     try {
@@ -342,7 +350,8 @@ app.post('/api/tickets/:id/comentarios', async (req, res) => {
 // 1. Obtener la lista de todos los usuarios (sin contraseñas por seguridad)
 app.get('/api/usuarios', async (req, res) => {
     try {
-        const query = 'SELECT id, nombre, email, rol FROM usuarios ORDER BY nombre ASC';
+        // Agregamos "area" para que el Admin la vea en su tabla
+        const query = 'SELECT id, nombre, email, rol, area FROM usuarios ORDER BY nombre ASC';
         const resultado = await pool.query(query);
         res.json(resultado.rows);
     } catch (error) {
