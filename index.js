@@ -475,43 +475,64 @@ app.put('/api/tareas/:id/pausar', async (req, res) => {
         res.status(500).json({ error: "Error al pausar la tarea" });
     }
 });
+// ==========================================
+// COMPLETAR RUTINA Y GUARDAR EN HISTORIAL
+// ==========================================
 app.put('/api/tareas/:id/completar', async (req, res) => {
     try {
         const { id } = req.params;
-        const { usuario } = req.body; // NUEVO: Recibimos quién hizo la tarea
+        const { usuario } = req.body;
 
-        // 1. Obtenemos los datos de la tarea actual
-        const tareaActual = await pool.query('SELECT titulo, hora_programada FROM tareas_diarias WHERE id = $1', [id]);
-        if (tareaActual.rows.length === 0) return res.status(404).json({ error: "Tarea no encontrada" });
-
-        const titulo = tareaActual.rows[0].titulo;
-        const hora = tareaActual.rows[0].hora_programada;
-
-        // 2. Reprogramamos la tarea principal para mañana
-        const queryReprogramar = `
-      UPDATE tareas_diarias 
-      SET estado = 'Pendiente', ultima_vez_completada = CURRENT_TIMESTAMP, proxima_ejecucion = (CURRENT_DATE + INTERVAL '1 day') + $1::time
-      WHERE id = $2 RETURNING *;
-    `;
-        const resultado = await pool.query(queryReprogramar, [hora, id]);
-
-        // 3. NUEVO: Guardamos el registro en la bitácora histórica
-        await pool.query(
-            'INSERT INTO historial_tareas (tarea_id, titulo_tarea, usuario_que_completo) VALUES ($1, $2, $3)',
-            [id, titulo, usuario || 'Sistema']
+        // 1. Obtenemos los datos actuales de la tarea (incluyendo tiempos)
+        const tareaActual = await pool.query(
+            'SELECT titulo, hora_programada, fecha_inicio_real, tiempo_acumulado_minutos FROM tareas_diarias WHERE id = $1',
+            [id]
         );
 
+        if (tareaActual.rows.length === 0) return res.status(404).json({ error: "Tarea no encontrada" });
+
+        const { titulo, hora_programada, fecha_inicio_real, tiempo_acumulado_minutos } = tareaActual.rows[0];
+
+        // 2. Calculamos el tiempo total definitivo (Tiempo pausado + El tiempo del último tramo)
+        let tiempoFinal = parseFloat(tiempo_acumulado_minutos) || 0;
+
+        if (fecha_inicio_real) {
+            // Si la tarea estaba en curso cuando le dieron a completar, sumamos ese último tramo
+            const calcTramo = await pool.query(
+                "SELECT EXTRACT(EPOCH FROM (CURRENT_TIMESTAMP - $1::timestamp))/60 AS minutos",
+                [fecha_inicio_real]
+            );
+            tiempoFinal += parseFloat(calcTramo.rows[0].minutos);
+        }
+
+        // 3. Guardamos el registro en la bitácora histórica (AHORA CON EL TIEMPO)
+        await pool.query(
+            'INSERT INTO historial_tareas (tarea_id, titulo_tarea, usuario_que_completo, tiempo_total_minutos) VALUES ($1, $2, $3, $4)',
+            [id, titulo, usuario || 'Sistema', tiempoFinal]
+        );
+
+        // 4. Reprogramamos la tarea principal para mañana (Y LIMPIAMOS LOS TIEMPOS)
+        const queryReprogramar = `
+          UPDATE tareas_diarias 
+          SET estado = 'Pendiente', 
+              ultima_vez_completada = CURRENT_TIMESTAMP, 
+              proxima_ejecucion = (CURRENT_DATE + INTERVAL '1 day') + $1::time,
+              en_pausa = FALSE,
+              fecha_inicio_real = NULL,
+              tiempo_acumulado_minutos = 0 
+          WHERE id = $2 RETURNING *;
+        `;
+        const resultado = await pool.query(queryReprogramar, [hora_programada, id]);
         const tareaActualizada = resultado.rows[0];
 
-        // 📢 AVISAMOS A TODOS QUE ALGUIEN COMPLETÓ UNA TAREA
         io.emit('tareaCompletada', tareaActualizada);
-
         res.json(tareaActualizada);
     } catch (error) {
         console.error("Error en completar tarea:", error);
         res.status(500).json({ error: "Error al reprogramar la tarea" });
     }
 });
+
 // NUEVO: Obtener todo el historial para exportar a Excel
 app.get('/api/tareas/historial', async (req, res) => {
     try {
