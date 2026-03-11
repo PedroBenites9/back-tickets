@@ -413,8 +413,60 @@ app.post('/api/tareas', async (req, res) => {
     }
 });
 
+// ==========================================
+// NUEVO: INICIAR / REANUDAR TAREA (Cronómetro)
+// ==========================================
+app.put('/api/tareas/:id/iniciar', async (req, res) => {
+    try {
+        const { id } = req.params;
 
-// Completar rutina, reprogramar y GUARDAR EN HISTORIAL
+        // Marcamos la tarea como iniciada (quitamos pausa y seteamos el reloj)
+        const query = `
+            UPDATE tareas_diarias 
+            SET en_pausa = FALSE, 
+                fecha_inicio_real = CURRENT_TIMESTAMP,
+                estado = 'En Curso'
+            WHERE id = $1 
+            RETURNING *;
+        `;
+        const resultado = await pool.query(query, [id]);
+
+        // Avisamos a todos los clientes conectados que la tarea cambió de estado
+        io.emit('tareaModificada', resultado.rows[0]);
+        res.json(resultado.rows[0]);
+    } catch (error) {
+        console.error("Error al iniciar tarea:", error);
+        res.status(500).json({ error: "Error al iniciar la tarea" });
+    }
+});
+
+// ==========================================
+// NUEVO: PAUSAR TAREA (Cronómetro)
+// ==========================================
+app.put('/api/tareas/:id/pausar', async (req, res) => {
+    try {
+        const { id } = req.params;
+
+        // Marcamos la tarea como pausada
+        const query = `
+            UPDATE tareas_diarias 
+            SET en_pausa = TRUE, 
+                fecha_fin_real = CURRENT_TIMESTAMP,
+                estado = 'Pausada'
+            WHERE id = $1 
+            RETURNING *;
+        `;
+        const resultado = await pool.query(query, [id]);
+
+        // Avisamos a todos los clientes conectados que la tarea cambió de estado
+        io.emit('tareaModificada', resultado.rows[0]);
+        res.json(resultado.rows[0]);
+    } catch (error) {
+        console.error("Error al pausar tarea:", error);
+        res.status(500).json({ error: "Error al pausar la tarea" });
+    }
+});
+
 app.put('/api/tareas/:id/completar', async (req, res) => {
     try {
         const { id } = req.params;
