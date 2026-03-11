@@ -441,21 +441,30 @@ app.put('/api/tareas/:id/iniciar', async (req, res) => {
 });
 
 // ==========================================
-// NUEVO: PAUSAR TAREA (Cronómetro)
+// NUEVO: PAUSAR TAREA (Calcula tiempo)
 // ==========================================
 app.put('/api/tareas/:id/pausar', async (req, res) => {
     try {
         const { id } = req.params;
 
-        // Marcamos la tarea como pausada
+        // 1. Necesitamos saber cuándo se inició para calcular la diferencia de tiempo
+        const tareaActual = await pool.query('SELECT fecha_inicio_real, tiempo_acumulado_minutos FROM tareas_diarias WHERE id = $1', [id]);
+
+        if (tareaActual.rows.length === 0 || !tareaActual.rows[0].fecha_inicio_real) {
+            return res.status(400).json({ error: "La tarea no está en curso o no tiene fecha de inicio." });
+        }
+
+        // 2. Calculamos los minutos transcurridos en este tramo en PostgreSQL y los sumamos al historial
         const query = `
             UPDATE tareas_diarias 
-            SET en_pausa = TRUE, 
-                fecha_fin_real = CURRENT_TIMESTAMP,
-                estado = 'Pausada'
+            SET en_pausa = TRUE,
+                estado = 'Pausada',
+                tiempo_acumulado_minutos = COALESCE(tiempo_acumulado_minutos, 0) + EXTRACT(EPOCH FROM (CURRENT_TIMESTAMP - fecha_inicio_real))/60,
+                fecha_inicio_real = NULL -- Limpiamos el reloj para el próximo inicio
             WHERE id = $1 
             RETURNING *;
         `;
+
         const resultado = await pool.query(query, [id]);
 
         // Avisamos a todos los clientes conectados que la tarea cambió de estado
@@ -466,7 +475,6 @@ app.put('/api/tareas/:id/pausar', async (req, res) => {
         res.status(500).json({ error: "Error al pausar la tarea" });
     }
 });
-
 app.put('/api/tareas/:id/completar', async (req, res) => {
     try {
         const { id } = req.params;
