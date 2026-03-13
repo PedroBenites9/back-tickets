@@ -610,6 +610,28 @@ app.get('/api/tareas/historial', async (req, res) => {
         res.status(500).json({ error: "Error al obtener el historial" });
     }
 });
+// ==========================================
+// NUEVO: ELIMINAR TAREA (Y SU HISTORIAL)
+// ==========================================
+app.delete('/api/tareas/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+
+        // 1. Por seguridad, borramos primero los registros de esta tarea en el historial
+        await pool.query('DELETE FROM historial_tareas WHERE tarea_id = $1', [id]);
+
+        // 2. Ahora sí, borramos la tarea principal
+        await pool.query('DELETE FROM tareas_diarias WHERE id = $1', [id]);
+
+        // 3. Avisamos a todos los conectados que la tarea ya no existe
+        io.emit('tareaEliminada', parseInt(id));
+
+        res.json({ mensaje: 'Tarea eliminada correctamente' });
+    } catch (error) {
+        console.error("Error al eliminar la tarea:", error);
+        res.status(500).json({ error: "Error interno al eliminar la tarea" });
+    }
+});
 
 // Antes decía app.listen... ahora es server.listen
 server.listen(PORT, () => {
