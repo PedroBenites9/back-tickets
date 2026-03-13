@@ -18,6 +18,66 @@ const io = new Server(server, {
     cors: { origin: "*" } // Permite que cualquier React se conecte al túnel
 });
 
+// ==========================================
+// CEREBRO MATEMÁTICO CENTRALIZADO (Buena Práctica DRY)
+// ==========================================
+function calcularProximaEjecucion(frecuencia, hora_programada, dias_especificos, fecha_unica, esNuevaCreacion = false) {
+    const ahora = new Date();
+    let proxima = new Date(ahora);
+
+    // Aseguramos leer correctamente la hora ("09" y "00")
+    const [horas, minutos] = hora_programada.split(':');
+
+    // 1. Caso Fecha Única
+    if (frecuencia === 'Fecha Unica' && fecha_unica) {
+        return `${fecha_unica} ${horas}:${minutos}:00`; // Literal y blindado
+    }
+
+    proxima.setHours(parseInt(horas), parseInt(minutos), 0, 0);
+
+    // 2. Caso Días Específicos
+    if (frecuencia === 'Dias Especificos' && dias_especificos && dias_especificos.length > 0) {
+        const hoy = ahora.getDay(); // Dom=0, Lun=1...
+        const diasOrdenados = [...dias_especificos].sort();
+
+        let proximoDia;
+        if (esNuevaCreacion) {
+            // Si recién la creo, me fijo si todavía tengo tiempo HOY o un día futuro esta semana
+            proximoDia = diasOrdenados.find(d => d > hoy || (d === hoy && proxima > ahora));
+        } else {
+            // Si la acabo de COMPLETAR, obligatoriamente salto al siguiente día disponible, NO hoy.
+            proximoDia = diasOrdenados.find(d => d > hoy);
+        }
+
+        let diasASumar = 0;
+        if (proximoDia !== undefined) {
+            diasASumar = proximoDia - hoy;
+        } else {
+            diasASumar = (7 - hoy) + diasOrdenados[0]; // Salto a la próxima semana
+        }
+        proxima.setDate(proxima.getDate() + diasASumar);
+
+    } else {
+        // 3. Casos Diaria, Semanal, Mensual
+        if (esNuevaCreacion) {
+            // Si la creo y ya pasó la hora, la paso para mañana
+            if (proxima <= ahora) proxima.setDate(proxima.getDate() + 1);
+        } else {
+            // Si la completo, le sumo su intervalo cíclico
+            if (frecuencia === 'Diaria') proxima.setDate(proxima.getDate() + 1);
+            if (frecuencia === 'Semanal') proxima.setDate(proxima.getDate() + 7);
+            if (frecuencia === 'Mensual') proxima.setMonth(proxima.getMonth() + 1);
+        }
+    }
+
+    // Blindaje de Zona Horaria (Armamos YYYY-MM-DD HH:mm:00 a mano)
+    const anio = proxima.getFullYear();
+    const mes = String(proxima.getMonth() + 1).padStart(2, '0');
+    const dia = String(proxima.getDate()).padStart(2, '0');
+
+    return `${anio}-${mes}-${dia} ${horas}:${minutos}:00`;
+}
+
 app.use(cors());
 app.use(express.json());
 
@@ -394,23 +454,24 @@ app.get('/api/tareas', async (req, res) => {
 // 2. Crear una nueva rutina de mantenimiento (ACTUALIZADA)
 app.post('/api/tareas', async (req, res) => {
     try {
-        const { titulo, categoria, frecuencia, hora_programada, proxima_ejecucion, dias_especificos, fecha_unica } = req.body;
+        const { titulo, categoria, frecuencia, hora_programada, dias_especificos, fecha_unica } = req.body;
 
-        // Convertimos el arreglo de días a un formato que PostgreSQL entienda (JSON)
+        // LLAMAMOS AL CEREBRO (true = es nueva creación)
+        const proxima = calcularProximaEjecucion(frecuencia, hora_programada, dias_especificos, fecha_unica, true);
+
         const diasJson = dias_especificos ? JSON.stringify(dias_especificos) : '[]';
 
         const query = `
-      INSERT INTO tareas_diarias (titulo, categoria, frecuencia, hora_programada, proxima_ejecucion, dias_especificos, fecha_unica) 
-      VALUES ($1, $2, $3, $4, $5, $6, $7) 
-      RETURNING *;
-    `;
-        const resultado = await pool.query(query, [titulo, categoria, frecuencia, hora_programada, proxima_ejecucion, diasJson, fecha_unica || null]);
-        const tareaCreada = resultado.rows[0];
+          INSERT INTO tareas_diarias (titulo, categoria, frecuencia, hora_programada, proxima_ejecucion, dias_especificos, fecha_unica) 
+          VALUES ($1, $2, $3, $4, $5, $6, $7) 
+          RETURNING *;
+        `;
+        const resultado = await pool.query(query, [titulo, categoria, frecuencia, hora_programada, proxima, diasJson, fecha_unica || null]);
 
-        io.emit('tareaCreada', tareaCreada);
-        res.json(tareaCreada);
+        io.emit('tareaCreada', resultado.rows[0]);
+        res.json(resultado.rows[0]);
     } catch (error) {
-        console.error("Error en POST /api/tareas:", error);
+        console.error("Error al crear la tarea:", error);
         res.status(500).json({ error: "Error al crear la tarea" });
     }
 });
@@ -540,19 +601,30 @@ app.put('/api/tareas/:id/completar', async (req, res) => {
             }
         }
 
-        // 5. Reprogramamos usando los días calculados
+        // 4. EL CEREBRO DE REPROGRAMACIÓN
+        if (frecuencia === 'Fecha Unica') {
+            const queryArchivar = "UPDATE tareas_diarias SET estado = 'Completada Definitiva' WHERE id = $1 RETURNING *";
+            const resultado = await pool.query(queryArchivar, [id]);
+            io.emit('tareaCompletada', resultado.rows[0]);
+            return res.json(resultado.rows[0]);
+        }
+
+        // Llamamos al cerebro (false = NO es nueva, es una completación)
+        const nuevaProxima = calcularProximaEjecucion(frecuencia, hora_programada, dias_especificos, fecha_unica, false);
+
+        // 5. Reprogramamos enviándole la fecha ya calculada perfectamente
         const queryReprogramar = `
           UPDATE tareas_diarias 
           SET estado = 'Pendiente', 
               ultima_vez_completada = CURRENT_TIMESTAMP, 
-              proxima_ejecucion = (CURRENT_DATE + INTERVAL '${diasASumar} days') + $1::time,
+              proxima_ejecucion = $1::timestamp,
               en_pausa = FALSE,
               fecha_inicio_real = NULL,
               tiempo_acumulado_minutos = 0,
               hora_primer_inicio = NULL
           WHERE id = $2 RETURNING *;
         `;
-        const resultado = await pool.query(queryReprogramar, [hora_programada, id]);
+        const resultado = await pool.query(queryReprogramar, [nuevaProxima, id]);
 
         io.emit('tareaCompletada', resultado.rows[0]);
         res.json(resultado.rows[0]);
