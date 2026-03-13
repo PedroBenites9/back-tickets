@@ -391,21 +391,23 @@ app.get('/api/tareas', async (req, res) => {
     }
 });
 
-// 2. Crear una nueva rutina de mantenimiento
+// 2. Crear una nueva rutina de mantenimiento (ACTUALIZADA)
 app.post('/api/tareas', async (req, res) => {
     try {
-        const { titulo, categoria, frecuencia, hora_programada, proxima_ejecucion } = req.body;
+        const { titulo, categoria, frecuencia, hora_programada, proxima_ejecucion, dias_especificos, fecha_unica } = req.body;
+
+        // Convertimos el arreglo de días a un formato que PostgreSQL entienda (JSON)
+        const diasJson = dias_especificos ? JSON.stringify(dias_especificos) : '[]';
+
         const query = `
-      INSERT INTO tareas_diarias (titulo, categoria, frecuencia, hora_programada, proxima_ejecucion) 
-      VALUES ($1, $2, $3, $4, $5) 
+      INSERT INTO tareas_diarias (titulo, categoria, frecuencia, hora_programada, proxima_ejecucion, dias_especificos, fecha_unica) 
+      VALUES ($1, $2, $3, $4, $5, $6, $7) 
       RETURNING *;
     `;
-        const resultado = await pool.query(query, [titulo, categoria, frecuencia, hora_programada, proxima_ejecucion]);
+        const resultado = await pool.query(query, [titulo, categoria, frecuencia, hora_programada, proxima_ejecucion, diasJson, fecha_unica || null]);
         const tareaCreada = resultado.rows[0];
 
-        // 📢 AVISAMOS A TODOS QUE HAY UNA NUEVA RUTINA
         io.emit('tareaCreada', tareaCreada);
-
         res.json(tareaCreada);
     } catch (error) {
         console.error("Error en POST /api/tareas:", error);
@@ -477,29 +479,25 @@ app.put('/api/tareas/:id/pausar', async (req, res) => {
     }
 });
 // ==========================================
-// COMPLETAR RUTINA Y GUARDAR EN HISTORIAL
-// ==========================================
-// ==========================================
-// COMPLETAR RUTINA Y GUARDAR EN HISTORIAL
+// COMPLETAR RUTINA Y GUARDAR EN HISTORIAL (CEREBRO MATEMÁTICO)
 // ==========================================
 app.put('/api/tareas/:id/completar', async (req, res) => {
     try {
         const { id } = req.params;
         const { usuario } = req.body;
 
-        // 1. Obtenemos los datos actuales (AHORA INCLUYE hora_primer_inicio)
+        // 1. Obtenemos TODOS los datos de la tarea
         const tareaActual = await pool.query(
-            'SELECT titulo, hora_programada, fecha_inicio_real, tiempo_acumulado_minutos, hora_primer_inicio FROM tareas_diarias WHERE id = $1',
+            'SELECT titulo, hora_programada, fecha_inicio_real, tiempo_acumulado_minutos, hora_primer_inicio, frecuencia, dias_especificos FROM tareas_diarias WHERE id = $1',
             [id]
         );
 
         if (tareaActual.rows.length === 0) return res.status(404).json({ error: "Tarea no encontrada" });
 
-        const { titulo, hora_programada, fecha_inicio_real, tiempo_acumulado_minutos, hora_primer_inicio } = tareaActual.rows[0];
+        const { titulo, hora_programada, fecha_inicio_real, tiempo_acumulado_minutos, hora_primer_inicio, frecuencia, dias_especificos } = tareaActual.rows[0];
 
         // 2. Calculamos el tiempo total definitivo
         let tiempoFinal = parseFloat(tiempo_acumulado_minutos) || 0;
-
         if (fecha_inicio_real) {
             const calcTramo = await pool.query(
                 "SELECT EXTRACT(EPOCH FROM (CURRENT_TIMESTAMP - $1::timestamp))/60 AS minutos",
@@ -508,29 +506,56 @@ app.put('/api/tareas/:id/completar', async (req, res) => {
             tiempoFinal += parseFloat(calcTramo.rows[0].minutos);
         }
 
-        // 3. Guardamos en bitácora (AHORA INCLUIMOS LA FECHA DE INICIO)
+        // 3. Guardamos en la bitácora
         await pool.query(
             'INSERT INTO historial_tareas (tarea_id, titulo_tarea, usuario_que_completo, tiempo_total_minutos, fecha_inicio) VALUES ($1, $2, $3, $4, $5)',
             [id, titulo, usuario || 'Sistema', tiempoFinal, hora_primer_inicio]
         );
 
-        // 4. Reprogramamos y limpiamos TODAS las variables del cronómetro
+        // 4. EL CEREBRO: Calcular la próxima ejecución
+        if (frecuencia === 'Fecha Unica') {
+            // Si era fecha única, se completó para siempre. La archivamos.
+            const queryArchivar = "UPDATE tareas_diarias SET estado = 'Completada Definitiva' WHERE id = $1 RETURNING *";
+            const resultado = await pool.query(queryArchivar, [id]);
+            io.emit('tareaCompletada', resultado.rows[0]);
+            return res.json(resultado.rows[0]);
+        }
+
+        let diasASumar = 1; // Por defecto (Diaria)
+        if (frecuencia === 'Semanal') diasASumar = 7;
+        else if (frecuencia === 'Mensual') diasASumar = 30;
+        else if (frecuencia === 'Dias Especificos' && dias_especificos.length > 0) {
+            const hoy = new Date().getDay(); // Domingo=0, Lunes=1...
+            const diasOrdenados = dias_especificos.sort();
+
+            // Buscamos el próximo día en el arreglo que sea MAYOR que hoy
+            const proximoDia = diasOrdenados.find(d => d > hoy);
+
+            if (proximoDia !== undefined) {
+                // Si hay un día en esta misma semana (Ej: Hoy es Lunes(1), próximo es Miércoles(3) -> Faltan 2 días)
+                diasASumar = proximoDia - hoy;
+            } else {
+                // Si no hay más días esta semana, saltamos a la próxima semana al primer día del arreglo
+                diasASumar = (7 - hoy) + diasOrdenados[0];
+            }
+        }
+
+        // 5. Reprogramamos usando los días calculados
         const queryReprogramar = `
           UPDATE tareas_diarias 
           SET estado = 'Pendiente', 
               ultima_vez_completada = CURRENT_TIMESTAMP, 
-              proxima_ejecucion = (CURRENT_DATE + INTERVAL '1 day') + $1::time,
+              proxima_ejecucion = (CURRENT_DATE + INTERVAL '${diasASumar} days') + $1::time,
               en_pausa = FALSE,
               fecha_inicio_real = NULL,
               tiempo_acumulado_minutos = 0,
-              hora_primer_inicio = NULL -- <-- LIMPIAMOS PARA MAÑANA
+              hora_primer_inicio = NULL
           WHERE id = $2 RETURNING *;
         `;
         const resultado = await pool.query(queryReprogramar, [hora_programada, id]);
-        const tareaActualizada = resultado.rows[0];
 
-        io.emit('tareaCompletada', tareaActualizada);
-        res.json(tareaActualizada);
+        io.emit('tareaCompletada', resultado.rows[0]);
+        res.json(resultado.rows[0]);
     } catch (error) {
         console.error("Error en completar tarea:", error);
         res.status(500).json({ error: "Error al reprogramar la tarea" });
