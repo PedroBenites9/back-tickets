@@ -549,13 +549,13 @@ app.put('/api/tareas/:id/completar', async (req, res) => {
 
         // 1. Obtenemos TODOS los datos de la tarea
         const tareaActual = await pool.query(
-            'SELECT titulo, hora_programada, fecha_inicio_real, tiempo_acumulado_minutos, hora_primer_inicio, frecuencia, dias_especificos FROM tareas_diarias WHERE id = $1',
+            'SELECT titulo, hora_programada, fecha_inicio_real, tiempo_acumulado_minutos, hora_primer_inicio, frecuencia, dias_especificos, fecha_unica FROM tareas_diarias WHERE id = $1',
             [id]
         );
 
         if (tareaActual.rows.length === 0) return res.status(404).json({ error: "Tarea no encontrada" });
 
-        const { titulo, hora_programada, fecha_inicio_real, tiempo_acumulado_minutos, hora_primer_inicio, frecuencia, dias_especificos } = tareaActual.rows[0];
+        const { titulo, hora_programada, fecha_inicio_real, tiempo_acumulado_minutos, hora_primer_inicio, frecuencia, dias_especificos, fecha_unica } = tareaActual.rows[0];
 
         // 2. Calculamos el tiempo total definitivo
         let tiempoFinal = parseFloat(tiempo_acumulado_minutos) || 0;
@@ -573,34 +573,6 @@ app.put('/api/tareas/:id/completar', async (req, res) => {
             [id, titulo, usuario || 'Sistema', tiempoFinal, hora_primer_inicio]
         );
 
-        // 4. EL CEREBRO: Calcular la próxima ejecución
-        if (frecuencia === 'Fecha Unica') {
-            // Si era fecha única, se completó para siempre. La archivamos.
-            const queryArchivar = "UPDATE tareas_diarias SET estado = 'Completada Definitiva' WHERE id = $1 RETURNING *";
-            const resultado = await pool.query(queryArchivar, [id]);
-            io.emit('tareaCompletada', resultado.rows[0]);
-            return res.json(resultado.rows[0]);
-        }
-
-        let diasASumar = 1; // Por defecto (Diaria)
-        if (frecuencia === 'Semanal') diasASumar = 7;
-        else if (frecuencia === 'Mensual') diasASumar = 30;
-        else if (frecuencia === 'Dias Especificos' && dias_especificos.length > 0) {
-            const hoy = new Date().getDay(); // Domingo=0, Lunes=1...
-            const diasOrdenados = dias_especificos.sort();
-
-            // Buscamos el próximo día en el arreglo que sea MAYOR que hoy
-            const proximoDia = diasOrdenados.find(d => d > hoy);
-
-            if (proximoDia !== undefined) {
-                // Si hay un día en esta misma semana (Ej: Hoy es Lunes(1), próximo es Miércoles(3) -> Faltan 2 días)
-                diasASumar = proximoDia - hoy;
-            } else {
-                // Si no hay más días esta semana, saltamos a la próxima semana al primer día del arreglo
-                diasASumar = (7 - hoy) + diasOrdenados[0];
-            }
-        }
-
         // 4. EL CEREBRO DE REPROGRAMACIÓN
         if (frecuencia === 'Fecha Unica') {
             const queryArchivar = "UPDATE tareas_diarias SET estado = 'Completada Definitiva' WHERE id = $1 RETURNING *";
@@ -609,10 +581,10 @@ app.put('/api/tareas/:id/completar', async (req, res) => {
             return res.json(resultado.rows[0]);
         }
 
-        // Llamamos al cerebro (false = NO es nueva, es una completación)
+        // Llamamos al cerebro centralizado
         const nuevaProxima = calcularProximaEjecucion(frecuencia, hora_programada, dias_especificos, fecha_unica, false);
 
-        // 5. Reprogramamos enviándole la fecha ya calculada perfectamente
+        // 5. Reprogramamos usando la fecha perfecta
         const queryReprogramar = `
           UPDATE tareas_diarias 
           SET estado = 'Pendiente', 
