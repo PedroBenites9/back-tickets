@@ -25,27 +25,29 @@ function calcularProximaEjecucion(frecuencia, hora_programada, dias_especificos,
     const ahora = new Date();
     let proxima = new Date(ahora);
 
-    // Aseguramos leer correctamente la hora ("09" y "00")
-    const [horas, minutos] = hora_programada.split(':');
+    // BLINDAJE 1: Si una tarea vieja no tiene hora, usamos '00:00' para que Node no explote
+    const horaSegura = hora_programada || '00:00';
+    const [horas, minutos] = horaSegura.split(':');
 
     // 1. Caso Fecha Única
     if (frecuencia === 'Fecha Unica' && fecha_unica) {
-        return `${fecha_unica} ${horas}:${minutos}:00`; // Literal y blindado
+        return `${fecha_unica} ${horas}:${minutos}:00`;
     }
 
     proxima.setHours(parseInt(horas), parseInt(minutos), 0, 0);
 
+    // BLINDAJE 2: Aseguramos que dias_especificos siempre sea un arreglo, incluso si viene vacío
+    const diasArray = Array.isArray(dias_especificos) ? dias_especificos : [];
+
     // 2. Caso Días Específicos
-    if (frecuencia === 'Dias Especificos' && dias_especificos && dias_especificos.length > 0) {
+    if (frecuencia === 'Dias Especificos' && diasArray.length > 0) {
         const hoy = ahora.getDay(); // Dom=0, Lun=1...
-        const diasOrdenados = [...dias_especificos].sort();
+        const diasOrdenados = [...diasArray].sort();
 
         let proximoDia;
         if (esNuevaCreacion) {
-            // Si recién la creo, me fijo si todavía tengo tiempo HOY o un día futuro esta semana
             proximoDia = diasOrdenados.find(d => d > hoy || (d === hoy && proxima > ahora));
         } else {
-            // Si la acabo de COMPLETAR, obligatoriamente salto al siguiente día disponible, NO hoy.
             proximoDia = diasOrdenados.find(d => d > hoy);
         }
 
@@ -60,17 +62,15 @@ function calcularProximaEjecucion(frecuencia, hora_programada, dias_especificos,
     } else {
         // 3. Casos Diaria, Semanal, Mensual
         if (esNuevaCreacion) {
-            // Si la creo y ya pasó la hora, la paso para mañana
             if (proxima <= ahora) proxima.setDate(proxima.getDate() + 1);
         } else {
-            // Si la completo, le sumo su intervalo cíclico
             if (frecuencia === 'Diaria') proxima.setDate(proxima.getDate() + 1);
             if (frecuencia === 'Semanal') proxima.setDate(proxima.getDate() + 7);
             if (frecuencia === 'Mensual') proxima.setMonth(proxima.getMonth() + 1);
         }
     }
 
-    // Blindaje de Zona Horaria (Armamos YYYY-MM-DD HH:mm:00 a mano)
+    // Armamos YYYY-MM-DD HH:mm:00
     const anio = proxima.getFullYear();
     const mes = String(proxima.getMonth() + 1).padStart(2, '0');
     const dia = String(proxima.getDate()).padStart(2, '0');
@@ -547,7 +547,6 @@ app.put('/api/tareas/:id/completar', async (req, res) => {
         const { id } = req.params;
         const { usuario } = req.body;
 
-        // 1. Obtenemos TODOS los datos de la tarea
         const tareaActual = await pool.query(
             'SELECT titulo, hora_programada, fecha_inicio_real, tiempo_acumulado_minutos, hora_primer_inicio, frecuencia, dias_especificos, fecha_unica FROM tareas_diarias WHERE id = $1',
             [id]
@@ -557,7 +556,6 @@ app.put('/api/tareas/:id/completar', async (req, res) => {
 
         const { titulo, hora_programada, fecha_inicio_real, tiempo_acumulado_minutos, hora_primer_inicio, frecuencia, dias_especificos, fecha_unica } = tareaActual.rows[0];
 
-        // 2. Calculamos el tiempo total definitivo
         let tiempoFinal = parseFloat(tiempo_acumulado_minutos) || 0;
         if (fecha_inicio_real) {
             const calcTramo = await pool.query(
@@ -567,13 +565,11 @@ app.put('/api/tareas/:id/completar', async (req, res) => {
             tiempoFinal += parseFloat(calcTramo.rows[0].minutos);
         }
 
-        // 3. Guardamos en la bitácora
         await pool.query(
             'INSERT INTO historial_tareas (tarea_id, titulo_tarea, usuario_que_completo, tiempo_total_minutos, fecha_inicio) VALUES ($1, $2, $3, $4, $5)',
             [id, titulo, usuario || 'Sistema', tiempoFinal, hora_primer_inicio]
         );
 
-        // 4. EL CEREBRO DE REPROGRAMACIÓN
         if (frecuencia === 'Fecha Unica') {
             const queryArchivar = "UPDATE tareas_diarias SET estado = 'Completada Definitiva' WHERE id = $1 RETURNING *";
             const resultado = await pool.query(queryArchivar, [id]);
@@ -581,10 +577,9 @@ app.put('/api/tareas/:id/completar', async (req, res) => {
             return res.json(resultado.rows[0]);
         }
 
-        // Llamamos al cerebro centralizado
+        // Llamamos al cerebro centralizado (false = NO es nueva creación)
         const nuevaProxima = calcularProximaEjecucion(frecuencia, hora_programada, dias_especificos, fecha_unica, false);
 
-        // 5. Reprogramamos usando la fecha perfecta
         const queryReprogramar = `
           UPDATE tareas_diarias 
           SET estado = 'Pendiente', 
@@ -605,7 +600,6 @@ app.put('/api/tareas/:id/completar', async (req, res) => {
         res.status(500).json({ error: "Error al reprogramar la tarea" });
     }
 });
-
 // NUEVO: Obtener todo el historial para exportar a Excel
 app.get('/api/tareas/historial', async (req, res) => {
     try {
