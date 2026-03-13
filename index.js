@@ -19,30 +19,30 @@ const io = new Server(server, {
 });
 
 // ==========================================
-// CEREBRO MATEMÁTICO CENTRALIZADO (Buena Práctica DRY)
+// CEREBRO MATEMÁTICO (Blindado contra Zonas Horarias de Argentina)
 // ==========================================
 function calcularProximaEjecucion(frecuencia, hora_programada, dias_especificos, fecha_unica, esNuevaCreacion = false) {
-    const ahora = new Date();
+    // 1. Truco Senior: Forzamos el reloj interno a UTC-3 (Argentina)
+    const ahoraUTC = new Date();
+    const ahora = new Date(ahoraUTC.getTime() - (3 * 60 * 60 * 1000));
     let proxima = new Date(ahora);
 
-    // BLINDAJE 1: Si una tarea vieja no tiene hora, usamos '00:00' para que Node no explote
     const horaSegura = hora_programada || '00:00';
     const [horas, minutos] = horaSegura.split(':');
 
-    // 1. Caso Fecha Única
     if (frecuencia === 'Fecha Unica' && fecha_unica) {
-        return `${fecha_unica} ${horas}:${minutos}:00`;
+        // Le pegamos el "-03:00" al final para blindar la zona horaria
+        return `${fecha_unica}T${horas}:${minutos}:00-03:00`;
     }
 
-    proxima.setHours(parseInt(horas), parseInt(minutos), 0, 0);
+    proxima.setUTCHours(parseInt(horas), parseInt(minutos), 0, 0);
 
-    // BLINDAJE 2: Aseguramos que dias_especificos siempre sea un arreglo, incluso si viene vacío
-    const diasArray = Array.isArray(dias_especificos) ? dias_especificos : [];
+    // 2. Convertimos los días a números matemáticos puros (Ej: "1" -> 1) para que no falle
+    const diasArray = Array.isArray(dias_especificos) ? dias_especificos.map(Number) : [];
 
-    // 2. Caso Días Específicos
     if (frecuencia === 'Dias Especificos' && diasArray.length > 0) {
-        const hoy = ahora.getDay(); // Dom=0, Lun=1...
-        const diasOrdenados = [...diasArray].sort();
+        const hoy = ahora.getUTCDay();
+        const diasOrdenados = [...diasArray].sort((a, b) => a - b);
 
         let proximoDia;
         if (esNuevaCreacion) {
@@ -57,25 +57,25 @@ function calcularProximaEjecucion(frecuencia, hora_programada, dias_especificos,
         } else {
             diasASumar = (7 - hoy) + diasOrdenados[0]; // Salto a la próxima semana
         }
-        proxima.setDate(proxima.getDate() + diasASumar);
+        proxima.setUTCDate(proxima.getUTCDate() + diasASumar);
 
     } else {
-        // 3. Casos Diaria, Semanal, Mensual
+        // Casos Diaria, Semanal, Mensual
         if (esNuevaCreacion) {
-            if (proxima <= ahora) proxima.setDate(proxima.getDate() + 1);
+            if (proxima <= ahora) proxima.setUTCDate(proxima.getUTCDate() + 1);
         } else {
-            if (frecuencia === 'Diaria') proxima.setDate(proxima.getDate() + 1);
-            if (frecuencia === 'Semanal') proxima.setDate(proxima.getDate() + 7);
-            if (frecuencia === 'Mensual') proxima.setMonth(proxima.getMonth() + 1);
+            if (frecuencia === 'Diaria') proxima.setUTCDate(proxima.getUTCDate() + 1);
+            if (frecuencia === 'Semanal') proxima.setUTCDate(proxima.getUTCDate() + 7);
+            if (frecuencia === 'Mensual') proxima.setUTCMonth(proxima.getUTCMonth() + 1);
         }
     }
 
-    // Armamos YYYY-MM-DD HH:mm:00
-    const anio = proxima.getFullYear();
-    const mes = String(proxima.getMonth() + 1).padStart(2, '0');
-    const dia = String(proxima.getDate()).padStart(2, '0');
+    const anio = proxima.getUTCFullYear();
+    const mes = String(proxima.getUTCMonth() + 1).padStart(2, '0');
+    const dia = String(proxima.getUTCDate()).padStart(2, '0');
 
-    return `${anio}-${mes}-${dia} ${horas}:${minutos}:00`;
+    // 3. Enviamos la fecha con la firma "-03:00" para que la BD jamás reste horas
+    return `${anio}-${mes}-${dia}T${horas}:${minutos}:00-03:00`;
 }
 
 app.use(cors());
