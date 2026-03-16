@@ -6,7 +6,7 @@ import bcrypt from 'bcrypt'; // NUEVO: Para encriptar contraseñas
 import jwt from 'jsonwebtoken'; // NUEVO: Para crear el token de sesión
 import http from 'http'; // NUEVO: Módulo nativo de Node
 import { Server } from 'socket.io'; // NUEVO: El motor de WebSockets
-
+import nodemailer from 'nodemailer';
 dotenv.config();
 
 const app = express();
@@ -87,6 +87,48 @@ const pool = new Pool({
     ssl: { rejectUnauthorized: false }
 });
 
+// ==========================================
+// CONFIGURACIÓN DE CORREO (Nodemailer)
+// ==========================================
+const transporter = nodemailer.createTransport({
+    service: 'gmail',
+    auth: {
+        user: process.env.EMAIL_USER,
+        pass: process.env.EMAIL_PASS
+    }
+});
+
+// Función auxiliar para armar y enviar el correo
+const enviarCorreoResolucion = async (emailDestino, ticket) => {
+    try {
+        const mailOptions = {
+            from: `"Soporte IT - Cruz de Malta" <${process.env.EMAIL_USER}>`,
+            to: emailDestino,
+            subject: `✅ Ticket Resuelto: ${ticket.codigo} - ${ticket.asunto}`,
+            html: `
+                <div style="font-family: Arial, sans-serif; padding: 20px; max-width: 600px; border: 1px solid #ddd; border-radius: 8px;">
+                    <h2 style="color: #198754; text-align: center;">¡Tu incidencia ha sido resuelta!</h2>
+                    <p>Hola,</p>
+                    <p>El equipo de Tecnología ha marcado tu ticket como <strong>Resuelto</strong>.</p>
+                    <div style="background-color: #f8f9fa; padding: 15px; border-radius: 5px; margin: 20px 0;">
+                        <ul style="list-style: none; padding: 0; margin: 0;">
+                            <li style="margin-bottom: 8px;"><strong>🏷️ Código:</strong> ${ticket.codigo}</li>
+                            <li style="margin-bottom: 8px;"><strong>📌 Asunto:</strong> ${ticket.asunto}</li>
+                            <li style="margin-bottom: 8px;"><strong>📂 Categoría:</strong> ${ticket.categoria}</li>
+                            <li><strong>👨‍💻 Técnico:</strong> ${ticket.tecnico_asignado || 'Equipo IT'}</li>
+                        </ul>
+                    </div>
+                    <p style="font-size: 0.9em; color: #666;">Si consideras que el problema persiste o tienes dudas, por favor comunícate con nosotros antes de que el sistema archive el ticket definitivamente en 5 días.</p>
+                    <p style="margin-top: 30px;">Saludos cordiales,<br><strong>Equipo de Soporte IT</strong></p>
+                </div>
+            `
+        };
+        await transporter.sendMail(mailOptions);
+        console.log(`📧 Correo de resolución enviado con éxito a: ${emailDestino}`);
+    } catch (error) {
+        console.error("❌ Error al enviar el correo:", error);
+    }
+};
 // NUEVO: Verificamos cuando alguien se conecta al túnel
 io.on('connection', (socket) => {
     console.log('🟢 Un usuario se conectó a WebSockets');
@@ -270,17 +312,27 @@ app.put('/api/tickets/:id/estado', async (req, res) => {
         let query = '';
 
         if (estado === 'Resuelto') {
-            // Si se finaliza, guardamos la fecha y hora actual
             query = "UPDATE tickets SET estado = $1, fecha_finalizado = CURRENT_TIMESTAMP WHERE id = $2 RETURNING *";
         } else {
-            // Si se reabre, limpiamos la fecha de finalización
             query = "UPDATE tickets SET estado = $1, fecha_finalizado = NULL WHERE id = $2 RETURNING *";
         }
 
         const resultado = await pool.query(query, [estado, id]);
         const ticketNuevo = resultado.rows[0];
 
-        io.emit('ticketCreado', ticketNuevo); // 📢 ¡Avisamos a todos!
+        io.emit('ticketCreado', ticketNuevo); // 📢 Avisamos a todos vía WebSockets
+
+        // ---> NUEVA MAGIA: Enviar correo si se resolvió <---
+        if (estado === 'Resuelto') {
+            // 1. Buscamos el correo del usuario que creó el ticket
+            const usuarioSolicitante = await pool.query('SELECT email FROM usuarios WHERE nombre = $1', [ticketNuevo.solicitante]);
+
+            if (usuarioSolicitante.rows.length > 0) {
+                const emailDestino = usuarioSolicitante.rows[0].email;
+                // 2. Disparamos el correo (SIN "await" para que se ejecute en segundo plano y no congele la app)
+                enviarCorreoResolucion(emailDestino, ticketNuevo);
+            }
+        }
 
         res.json(ticketNuevo);
     } catch (error) {
