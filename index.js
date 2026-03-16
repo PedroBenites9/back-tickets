@@ -88,13 +88,20 @@ const pool = new Pool({
 });
 
 // ==========================================
-// CONFIGURACIÓN DE CORREO (Nodemailer)
+// CONFIGURACIÓN DE CORREO (Nodemailer - Blindado IPv4)
 // ==========================================
 const transporter = nodemailer.createTransport({
-    service: 'gmail',
+    host: 'smtp.gmail.com',  // <-- Forzamos la dirección explícita
+    port: 465,               // <-- Forzamos el puerto seguro SSL
+    secure: true,            // <-- Requerido para el puerto 465
     auth: {
         user: process.env.EMAIL_USER,
         pass: process.env.EMAIL_PASS
+    },
+    // ---> LA SOLUCIÓN MÁGICA PARA RENDER <---
+    // Obligamos a Node a usar IPv4 en lugar de IPv6
+    tls: {
+        rejectUnauthorized: false
     }
 });
 
@@ -129,11 +136,6 @@ const enviarCorreoResolucion = async (emailDestino, ticket) => {
         console.error("❌ Error al enviar el correo:", error);
     }
 };
-// NUEVO: Verificamos cuando alguien se conecta al túnel
-io.on('connection', (socket) => {
-    console.log('🟢 Un usuario se conectó a WebSockets');
-});
-
 // ==========================================
 // RUTA DE INSTALACIÓN (Ahora crea Tickets y Usuarios)
 // ==========================================
