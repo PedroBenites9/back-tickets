@@ -322,7 +322,7 @@ app.put('/api/tickets/:id/estado', async (req, res) => {
         const resultado = await pool.query(query, [estado, id]);
         const ticketNuevo = resultado.rows[0];
 
-        io.emit('ticketCreado', ticketNuevo); // 📢 Avisamos a todos vía WebSockets
+        io.emit('ticketModificado', ticketNuevo); // 📢 Avisamos a todos vía WebSockets
 
         // ---> NUEVA MAGIA: Enviar correo si se resolvió <---
         if (estado === 'Resuelto') {
@@ -362,7 +362,7 @@ app.put('/api/tickets/editar/:id', async (req, res) => {
         const resultado = await pool.query(query, valores);
         const ticketNuevo = resultado.rows[0];
 
-        io.emit('ticketCreado', ticketNuevo); // 📢 ¡Avisamos a todos!
+        io.emit('ticketModificado', ticketNuevo);// 📢 ¡Avisamos a todos!
 
         res.json(ticketNuevo);
     } catch (error) {
@@ -402,7 +402,7 @@ app.put('/api/tickets/asignar/:id', async (req, res) => {
         const resultado = await pool.query(query, [tecnico, id]);
         const ticketNuevo = resultado.rows[0];
 
-        io.emit('ticketCreado', ticketNuevo); // 📢 ¡Avisamos a todos!
+        io.emit('ticketModificado', ticketNuevo);// 📢 ¡Avisamos a todos!
 
         res.json(ticketNuevo);
     } catch (error) {
@@ -451,6 +451,10 @@ app.post('/api/tickets/:id/comentarios', async (req, res) => {
       RETURNING *;
     `;
         const resultado = await pool.query(query, [id, autor, texto]);
+
+        // ---> NUEVO: Avisamos al mundo que hay un nuevo mensaje <---
+        io.emit('nuevoComentario', resultado.rows[0]);
+
         res.json(resultado.rows[0]);
     } catch (error) {
         console.error(error);
