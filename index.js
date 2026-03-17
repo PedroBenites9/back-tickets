@@ -92,7 +92,7 @@ const pool = new Pool({
 // ==========================================
 const transporter = nodemailer.createTransport({
     host: 'smtp.gmail.com',  // <-- Forzamos la dirección explícita
-    port: 597,               // <-- Forzamos el puerto seguro SSL
+    port: 587,               // <-- Forzamos el puerto seguro SSL
     secure: false,            // <-- Requerido para el puerto 465
     auth: {
         user: process.env.EMAIL_USER,
