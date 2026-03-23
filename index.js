@@ -6,7 +6,7 @@ import bcrypt from 'bcrypt'; // NUEVO: Para encriptar contraseñas
 import jwt from 'jsonwebtoken'; // NUEVO: Para crear el token de sesión
 import http from 'http'; // NUEVO: Módulo nativo de Node
 import { Server } from 'socket.io'; // NUEVO: El motor de WebSockets
-
+import nodemailer from 'nodemailer';
 dotenv.config();
 
 const app = express();
@@ -18,6 +18,66 @@ const io = new Server(server, {
     cors: { origin: "*" } // Permite que cualquier React se conecte al túnel
 });
 
+// ==========================================
+// CEREBRO MATEMÁTICO (Blindado contra Zonas Horarias de Argentina)
+// ==========================================
+function calcularProximaEjecucion(frecuencia, hora_programada, dias_especificos, fecha_unica, esNuevaCreacion = false) {
+    // 1. Truco Senior: Forzamos el reloj interno a UTC-3 (Argentina)
+    const ahoraUTC = new Date();
+    const ahora = new Date(ahoraUTC.getTime() - (3 * 60 * 60 * 1000));
+    let proxima = new Date(ahora);
+
+    const horaSegura = hora_programada || '00:00';
+    const [horas, minutos] = horaSegura.split(':');
+
+    if (frecuencia === 'Fecha Unica' && fecha_unica) {
+        // Le pegamos el "-03:00" al final para blindar la zona horaria
+        return `${fecha_unica}T${horas}:${minutos}:00-03:00`;
+    }
+
+    proxima.setUTCHours(parseInt(horas), parseInt(minutos), 0, 0);
+
+    // 2. Convertimos los días a números matemáticos puros (Ej: "1" -> 1) para que no falle
+    const diasArray = Array.isArray(dias_especificos) ? dias_especificos.map(Number) : [];
+
+    if (frecuencia === 'Dias Especificos' && diasArray.length > 0) {
+        const hoy = ahora.getUTCDay();
+        const diasOrdenados = [...diasArray].sort((a, b) => a - b);
+
+        let proximoDia;
+        if (esNuevaCreacion) {
+            proximoDia = diasOrdenados.find(d => d > hoy || (d === hoy && proxima > ahora));
+        } else {
+            proximoDia = diasOrdenados.find(d => d > hoy);
+        }
+
+        let diasASumar = 0;
+        if (proximoDia !== undefined) {
+            diasASumar = proximoDia - hoy;
+        } else {
+            diasASumar = (7 - hoy) + diasOrdenados[0]; // Salto a la próxima semana
+        }
+        proxima.setUTCDate(proxima.getUTCDate() + diasASumar);
+
+    } else {
+        // Casos Diaria, Semanal, Mensual
+        if (esNuevaCreacion) {
+            if (proxima <= ahora) proxima.setUTCDate(proxima.getUTCDate() + 1);
+        } else {
+            if (frecuencia === 'Diaria') proxima.setUTCDate(proxima.getUTCDate() + 1);
+            if (frecuencia === 'Semanal') proxima.setUTCDate(proxima.getUTCDate() + 7);
+            if (frecuencia === 'Mensual') proxima.setUTCMonth(proxima.getUTCMonth() + 1);
+        }
+    }
+
+    const anio = proxima.getUTCFullYear();
+    const mes = String(proxima.getUTCMonth() + 1).padStart(2, '0');
+    const dia = String(proxima.getUTCDate()).padStart(2, '0');
+
+    // 3. Enviamos la fecha con la firma "-03:00" para que la BD jamás reste horas
+    return `${anio}-${mes}-${dia}T${horas}:${minutos}:00-03:00`;
+}
+
 app.use(cors());
 app.use(express.json());
 
@@ -27,11 +87,38 @@ const pool = new Pool({
     ssl: { rejectUnauthorized: false }
 });
 
-// NUEVO: Verificamos cuando alguien se conecta al túnel
-io.on('connection', (socket) => {
-    console.log('🟢 Un usuario se conectó a WebSockets');
-});
 
+// Función auxiliar para armar y enviar el correo
+const enviarCorreoResolucion = async (emailDestino, ticket) => {
+    try {
+        const mailOptions = {
+            from: `"Soporte IT - Cruz de Malta" <${process.env.EMAIL_USER}>`,
+            to: emailDestino,
+            subject: `✅ Ticket Resuelto: ${ticket.codigo} - ${ticket.asunto}`,
+            html: `
+                <div style="font-family: Arial, sans-serif; padding: 20px; max-width: 600px; border: 1px solid #ddd; border-radius: 8px;">
+                    <h2 style="color: #198754; text-align: center;">¡Tu incidencia ha sido resuelta!</h2>
+                    <p>Hola,</p>
+                    <p>El equipo de Tecnología ha marcado tu ticket como <strong>Resuelto</strong>.</p>
+                    <div style="background-color: #f8f9fa; padding: 15px; border-radius: 5px; margin: 20px 0;">
+                        <ul style="list-style: none; padding: 0; margin: 0;">
+                            <li style="margin-bottom: 8px;"><strong>🏷️ Código:</strong> ${ticket.codigo}</li>
+                            <li style="margin-bottom: 8px;"><strong>📌 Asunto:</strong> ${ticket.asunto}</li>
+                            <li style="margin-bottom: 8px;"><strong>📂 Categoría:</strong> ${ticket.categoria}</li>
+                            <li><strong>👨‍💻 Técnico:</strong> ${ticket.tecnico_asignado || 'Equipo IT'}</li>
+                        </ul>
+                    </div>
+                    <p style="font-size: 0.9em; color: #666;">Si consideras que el problema persiste o tienes dudas, por favor comunícate con nosotros antes de que el sistema archive el ticket definitivamente en 5 días.</p>
+                    <p style="margin-top: 30px;">Saludos cordiales,<br><strong>Equipo de Soporte IT</strong></p>
+                </div>
+            `
+        };
+        await transporter.sendMail(mailOptions);
+        console.log(`📧 Correo de resolución enviado con éxito a: ${emailDestino}`);
+    } catch (error) {
+        console.error("❌ Error al enviar el correo:", error);
+    }
+};
 // ==========================================
 // RUTA DE INSTALACIÓN (Ahora crea Tickets y Usuarios)
 // ==========================================
@@ -210,17 +297,27 @@ app.put('/api/tickets/:id/estado', async (req, res) => {
         let query = '';
 
         if (estado === 'Resuelto') {
-            // Si se finaliza, guardamos la fecha y hora actual
             query = "UPDATE tickets SET estado = $1, fecha_finalizado = CURRENT_TIMESTAMP WHERE id = $2 RETURNING *";
         } else {
-            // Si se reabre, limpiamos la fecha de finalización
             query = "UPDATE tickets SET estado = $1, fecha_finalizado = NULL WHERE id = $2 RETURNING *";
         }
 
         const resultado = await pool.query(query, [estado, id]);
         const ticketNuevo = resultado.rows[0];
 
-        io.emit('ticketCreado', ticketNuevo); // 📢 ¡Avisamos a todos!
+        io.emit('ticketModificado', ticketNuevo); // 📢 Avisamos a todos vía WebSockets
+
+        // ---> NUEVA MAGIA: Enviar correo si se resolvió <---
+        if (estado === 'Resuelto') {
+            // 1. Buscamos el correo del usuario que creó el ticket
+            const usuarioSolicitante = await pool.query('SELECT email FROM usuarios WHERE nombre = $1', [ticketNuevo.solicitante]);
+
+            if (usuarioSolicitante.rows.length > 0) {
+                const emailDestino = usuarioSolicitante.rows[0].email;
+                // 2. Disparamos el correo (SIN "await" para que se ejecute en segundo plano y no congele la app)
+                enviarCorreoResolucion(emailDestino, ticketNuevo);
+            }
+        }
 
         res.json(ticketNuevo);
     } catch (error) {
@@ -248,7 +345,7 @@ app.put('/api/tickets/editar/:id', async (req, res) => {
         const resultado = await pool.query(query, valores);
         const ticketNuevo = resultado.rows[0];
 
-        io.emit('ticketCreado', ticketNuevo); // 📢 ¡Avisamos a todos!
+        io.emit('ticketModificado', ticketNuevo);// 📢 ¡Avisamos a todos!
 
         res.json(ticketNuevo);
     } catch (error) {
@@ -288,7 +385,7 @@ app.put('/api/tickets/asignar/:id', async (req, res) => {
         const resultado = await pool.query(query, [tecnico, id]);
         const ticketNuevo = resultado.rows[0];
 
-        io.emit('ticketCreado', ticketNuevo); // 📢 ¡Avisamos a todos!
+        io.emit('ticketModificado', ticketNuevo);// 📢 ¡Avisamos a todos!
 
         res.json(ticketNuevo);
     } catch (error) {
@@ -337,6 +434,10 @@ app.post('/api/tickets/:id/comentarios', async (req, res) => {
       RETURNING *;
     `;
         const resultado = await pool.query(query, [id, autor, texto]);
+
+        // ---> NUEVO: Avisamos al mundo que hay un nuevo mensaje <---
+        io.emit('nuevoComentario', resultado.rows[0]);
+
         res.json(resultado.rows[0]);
     } catch (error) {
         console.error(error);
@@ -391,24 +492,27 @@ app.get('/api/tareas', async (req, res) => {
     }
 });
 
-// 2. Crear una nueva rutina de mantenimiento
+// 2. Crear una nueva rutina de mantenimiento (ACTUALIZADA)
 app.post('/api/tareas', async (req, res) => {
     try {
-        const { titulo, categoria, frecuencia, hora_programada, proxima_ejecucion } = req.body;
+        const { titulo, categoria, frecuencia, hora_programada, dias_especificos, fecha_unica } = req.body;
+
+        // LLAMAMOS AL CEREBRO (true = es nueva creación)
+        const proxima = calcularProximaEjecucion(frecuencia, hora_programada, dias_especificos, fecha_unica, true);
+
+        const diasJson = dias_especificos ? JSON.stringify(dias_especificos) : '[]';
+
         const query = `
-      INSERT INTO tareas_diarias (titulo, categoria, frecuencia, hora_programada, proxima_ejecucion) 
-      VALUES ($1, $2, $3, $4, $5) 
-      RETURNING *;
-    `;
-        const resultado = await pool.query(query, [titulo, categoria, frecuencia, hora_programada, proxima_ejecucion]);
-        const tareaCreada = resultado.rows[0];
+          INSERT INTO tareas_diarias (titulo, categoria, frecuencia, hora_programada, proxima_ejecucion, dias_especificos, fecha_unica) 
+          VALUES ($1, $2, $3, $4, $5, $6, $7) 
+          RETURNING *;
+        `;
+        const resultado = await pool.query(query, [titulo, categoria, frecuencia, hora_programada, proxima, diasJson, fecha_unica || null]);
 
-        // 📢 AVISAMOS A TODOS QUE HAY UNA NUEVA RUTINA
-        io.emit('tareaCreada', tareaCreada);
-
-        res.json(tareaCreada);
+        io.emit('tareaCreada', resultado.rows[0]);
+        res.json(resultado.rows[0]);
     } catch (error) {
-        console.error("Error en POST /api/tareas:", error);
+        console.error("Error al crear la tarea:", error);
         res.status(500).json({ error: "Error al crear la tarea" });
     }
 });
@@ -477,27 +581,22 @@ app.put('/api/tareas/:id/pausar', async (req, res) => {
     }
 });
 // ==========================================
-// COMPLETAR RUTINA Y GUARDAR EN HISTORIAL
-// ==========================================
-// ==========================================
-// COMPLETAR RUTINA Y GUARDAR EN HISTORIAL (CON FRECUENCIAS)
+// COMPLETAR RUTINA Y GUARDAR EN HISTORIAL (CEREBRO MATEMÁTICO)
 // ==========================================
 app.put('/api/tareas/:id/completar', async (req, res) => {
     try {
         const { id } = req.params;
         const { usuario } = req.body;
 
-        // 1. Obtenemos los datos actuales (NUEVO: Traemos también la frecuencia)
         const tareaActual = await pool.query(
-            'SELECT titulo, hora_programada, fecha_inicio_real, tiempo_acumulado_minutos, hora_primer_inicio, frecuencia FROM tareas_diarias WHERE id = $1',
+            'SELECT titulo, hora_programada, fecha_inicio_real, tiempo_acumulado_minutos, hora_primer_inicio, frecuencia, dias_especificos, fecha_unica FROM tareas_diarias WHERE id = $1',
             [id]
         );
 
         if (tareaActual.rows.length === 0) return res.status(404).json({ error: "Tarea no encontrada" });
 
-        const { titulo, hora_programada, fecha_inicio_real, tiempo_acumulado_minutos, hora_primer_inicio, frecuencia } = tareaActual.rows[0];
+        const { titulo, hora_programada, fecha_inicio_real, tiempo_acumulado_minutos, hora_primer_inicio, frecuencia, dias_especificos, fecha_unica } = tareaActual.rows[0];
 
-        // 2. Calculamos el tiempo total definitivo
         let tiempoFinal = parseFloat(tiempo_acumulado_minutos) || 0;
         if (fecha_inicio_real) {
             const calcTramo = await pool.query(
@@ -507,34 +606,36 @@ app.put('/api/tareas/:id/completar', async (req, res) => {
             tiempoFinal += parseFloat(calcTramo.rows[0].minutos);
         }
 
-        // 3. Guardamos en bitácora
         await pool.query(
             'INSERT INTO historial_tareas (tarea_id, titulo_tarea, usuario_que_completo, tiempo_total_minutos, fecha_inicio) VALUES ($1, $2, $3, $4, $5)',
             [id, titulo, usuario || 'Sistema', tiempoFinal, hora_primer_inicio]
         );
 
-        // 4. NUEVO: Decidimos cuánto tiempo sumar para la próxima ejecución
-        let saltoTiempo = "1 day"; // Por defecto es diaria
-        if (frecuencia === 'Semanal') saltoTiempo = "1 week";
-        if (frecuencia === 'Mensual') saltoTiempo = "1 month";
+        if (frecuencia === 'Fecha Unica') {
+            const queryArchivar = "UPDATE tareas_diarias SET estado = 'Completada Definitiva' WHERE id = $1 RETURNING *";
+            const resultado = await pool.query(queryArchivar, [id]);
+            io.emit('tareaCompletada', resultado.rows[0]);
+            return res.json(resultado.rows[0]);
+        }
 
-        // 5. Reprogramamos usando el salto de tiempo dinámico
+        // Llamamos al cerebro centralizado (false = NO es nueva creación)
+        const nuevaProxima = calcularProximaEjecucion(frecuencia, hora_programada, dias_especificos, fecha_unica, false);
+
         const queryReprogramar = `
           UPDATE tareas_diarias 
           SET estado = 'Pendiente', 
               ultima_vez_completada = CURRENT_TIMESTAMP, 
-              proxima_ejecucion = (CURRENT_DATE + INTERVAL '${saltoTiempo}') + $1::time,
+              proxima_ejecucion = $1::timestamp,
               en_pausa = FALSE,
               fecha_inicio_real = NULL,
               tiempo_acumulado_minutos = 0,
-              hora_primer_inicio = NOW()
+              hora_primer_inicio = NULL
           WHERE id = $2 RETURNING *;
         `;
-        const resultado = await pool.query(queryReprogramar, [hora_programada, id]);
-        const tareaActualizada = resultado.rows[0];
+        const resultado = await pool.query(queryReprogramar, [nuevaProxima, id]);
 
-        io.emit('tareaCompletada', tareaActualizada);
-        res.json(tareaActualizada);
+        io.emit('tareaCompletada', resultado.rows[0]);
+        res.json(resultado.rows[0]);
     } catch (error) {
         console.error("Error en completar tarea:", error);
         res.status(500).json({ error: "Error al reprogramar la tarea" });
@@ -548,6 +649,28 @@ app.get('/api/tareas/historial', async (req, res) => {
         res.json(resultado.rows);
     } catch (error) {
         res.status(500).json({ error: "Error al obtener el historial" });
+    }
+});
+// ==========================================
+// NUEVO: ELIMINAR TAREA (Y SU HISTORIAL)
+// ==========================================
+app.delete('/api/tareas/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+
+        // 1. Por seguridad, borramos primero los registros de esta tarea en el historial
+        await pool.query('DELETE FROM historial_tareas WHERE tarea_id = $1', [id]);
+
+        // 2. Ahora sí, borramos la tarea principal
+        await pool.query('DELETE FROM tareas_diarias WHERE id = $1', [id]);
+
+        // 3. Avisamos a todos los conectados que la tarea ya no existe
+        io.emit('tareaEliminada', parseInt(id));
+
+        res.json({ mensaje: 'Tarea eliminada correctamente' });
+    } catch (error) {
+        console.error("Error al eliminar la tarea:", error);
+        res.status(500).json({ error: "Error interno al eliminar la tarea" });
     }
 });
 // NUEVO TRANSPORTER OAUTH2 (A prueba de bloqueos de Render)
