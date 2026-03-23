@@ -30,33 +30,46 @@ oAuth2Client.setCredentials({ refresh_token: process.env.OAUTH_REFRESH_TOKEN });
 
 const gmail = google.gmail({ version: 'v1', auth: oAuth2Client });
 
-// 2. Función maestra para enviar el correo por HTTP (¡Esquiva el bloqueo de Render!)
+
+// Función maestra para enviar el correo por HTTP (Blindaje Nivel 5)
 const enviarCorreoMagico = async (destinatario, asunto, htmlContenido) => {
     try {
-        // Armamos el correo en el formato exacto que pide Google
+        // 1. HARDCODEAMOS tu correo para evitar fallos de variables en la nube
+        const miCorreo = process.env.EMAIL_USER;
+
+        // 2. Codificamos el asunto para que soporte los Emojis (✅) sin romper el paquete
+        const asuntoCodificado = `=?utf-8?B?${Buffer.from(asunto).toString('base64')}?=`;
+
+        // 3. Armamos el mensaje con el estándar estricto RFC 2822
         const mensajePuro = [
-            `From: Soporte Cruz de Malta <${process.env.EMAIL_USER}>`,
+            `From: "Soporte Cruz de Malta" <${miCorreo}>`,
             `To: ${destinatario}`,
-            `Subject: =?utf-8?B?${Buffer.from(asunto).toString('base64')}?=`,
+            `Subject: ${asuntoCodificado}`,
             "MIME-Version: 1.0",
             "Content-Type: text/html; charset=utf-8",
-            "",
+            "", // Esta línea vacía es OBLIGATORIA para separar las cabeceras del diseño
             htmlContenido
-        ].join('\n');
+        ].join('\r\n');
 
-        // Lo codificamos para que viaje seguro por internet
+        // 4. Lo convertimos a formato web-safe para la API
         const encodedMensaje = Buffer.from(mensajePuro)
             .toString('base64')
             .replace(/\+/g, '-')
             .replace(/\//g, '_')
             .replace(/=+$/, '');
 
-        console.log(`✉️ ¡Éxito! Correo enviado vía Gmail API a: ${destinatario}`);
+        // 5. Disparamos el misil
+        const respuesta = await gmail.users.messages.send({
+            userId: 'me',
+            requestBody: { raw: encodedMensaje },
+        });
+
+        // NUEVO: Ahora Google nos TIENE que devolver un número de recibo (ID)
+        console.log(`✉️ ¡Éxito REAL! Correo enviado a ${destinatario}. Recibo de Google: ${respuesta.data.id}`);
     } catch (error) {
         console.error("⚠️ Error enviando correo con Gmail API:", error);
     }
 };
-
 // ==========================================
 // CEREBRO MATEMÁTICO (Blindado contra Zonas Horarias de Argentina)
 // ==========================================
