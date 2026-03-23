@@ -35,6 +35,7 @@ const enviarCorreoMagico = async (destinatario, asunto, htmlContenido) => {
     try {
         // Armamos el correo en el formato exacto que pide Google
         const mensajePuro = [
+            `From: Soporte Cruz de Malta <${process.env.EMAIL_USER}>`,
             `To: ${destinatario}`,
             `Subject: =?utf-8?B?${Buffer.from(asunto).toString('base64')}?=`,
             "MIME-Version: 1.0",
