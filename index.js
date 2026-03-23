@@ -135,34 +135,35 @@ const pool = new Pool({
 
 
 // Función auxiliar para armar y enviar el correo
+// Función auxiliar para armar y enviar el correo (VERSIÓN OAUTH2 - API GMAIL)
 const enviarCorreoResolucion = async (emailDestino, ticket) => {
     try {
-        const mailOptions = {
-            from: `"Soporte IT - Cruz de Malta" <${process.env.EMAIL_USER}>`,
-            to: emailDestino,
-            subject: `✅ Ticket Resuelto: ${ticket.codigo} - ${ticket.asunto}`,
-            html: `
-                <div style="font-family: Arial, sans-serif; padding: 20px; max-width: 600px; border: 1px solid #ddd; border-radius: 8px;">
-                    <h2 style="color: #198754; text-align: center;">¡Tu incidencia ha sido resuelta!</h2>
-                    <p>Hola,</p>
-                    <p>El equipo de Tecnología ha marcado tu ticket como <strong>Resuelto</strong>.</p>
-                    <div style="background-color: #f8f9fa; padding: 15px; border-radius: 5px; margin: 20px 0;">
-                        <ul style="list-style: none; padding: 0; margin: 0;">
-                            <li style="margin-bottom: 8px;"><strong>🏷️ Código:</strong> ${ticket.codigo}</li>
-                            <li style="margin-bottom: 8px;"><strong>📌 Asunto:</strong> ${ticket.asunto}</li>
-                            <li style="margin-bottom: 8px;"><strong>📂 Categoría:</strong> ${ticket.categoria}</li>
-                            <li><strong>👨‍💻 Técnico:</strong> ${ticket.tecnico_asignado || 'Equipo IT'}</li>
-                        </ul>
-                    </div>
-                    <p style="font-size: 0.9em; color: #666;">Si consideras que el problema persiste o tienes dudas, por favor comunícate con nosotros antes de que el sistema archive el ticket definitivamente en 5 días.</p>
-                    <p style="margin-top: 30px;">Saludos cordiales,<br><strong>Equipo de Soporte IT</strong></p>
-                </div>
-            `
-        };
-        await transporter.sendMail(mailOptions);
-        console.log(`📧 Correo de resolución enviado con éxito a: ${emailDestino}`);
+        const asuntoTicket = `✅ Ticket Resuelto: ${ticket.codigo} - ${ticket.asunto}`;
+
+        const plantillaHTML = `
+      <div style="font-family: Arial, sans-serif; padding: 20px; max-width: 600px; border: 1px solid #ddd; border-radius: 8px;">
+        <h2 style="color: #198754; text-align: center;">¡Tu incidencia ha sido resuelta!</h2>
+        <p>Hola,</p>
+        <p>El equipo de Tecnología ha marcado tu ticket como <strong>Resuelto</strong>.</p>
+        <div style="background-color: #f8f9fa; padding: 15px; border-radius: 5px; margin: 20px 0;">
+          <ul style="list-style: none; padding: 0; margin: 0;">
+            <li style="margin-bottom: 8px;"><strong>🏷️ Código:</strong> ${ticket.codigo}</li>
+            <li style="margin-bottom: 8px;"><strong>📌 Asunto:</strong> ${ticket.asunto}</li>
+            <li style="margin-bottom: 8px;"><strong>📂 Categoría:</strong> ${ticket.categoria}</li>
+            <li><strong>👨‍💻 Técnico:</strong> ${ticket.tecnico_asignado || 'Equipo IT'}</li>
+          </ul>
+        </div>
+        <p style="font-size: 0.9em; color: #666;">Si consideras que el problema persiste o tienes dudas, por favor comunícate con nosotros antes de que el ticket se cierre definitivamente.</p>
+        <p style="margin-top: 30px;">Saludos cordiales,<br><strong>Equipo de Soporte IT</strong></p>
+      </div>
+    `;
+
+        // ¡EL GOLPE FINAL! Usamos la API de Gmail en lugar de nodemailer
+        await enviarCorreoMagico(emailDestino, asuntoTicket, plantillaHTML);
+
+        console.log(`✉️ Correo de resolución procesado para: ${emailDestino}`);
     } catch (error) {
-        console.error("❌ Error al enviar el correo:", error);
+        console.error("❌ Error al armar/enviar el correo:", error);
     }
 };
 // ==========================================
