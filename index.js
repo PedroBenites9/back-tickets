@@ -50,14 +50,6 @@ const enviarCorreoMagico = async (destinatario, asunto, htmlContenido) => {
             .replace(/\//g, '_')
             .replace(/=+$/, '');
 
-        // Le pedimos a la API de Gmail que lo envíe
-        // Ejemplo de cómo llamarlo cuando el ticket se resuelve:
-        await enviarCorreoMagico(
-            "correoDelUsuario@gmail.com",
-            "¡Tu ticket ha sido Resuelto!",
-            "<h1>Hola, tu problema IT está solucionado.</h1>"
-        );
-
         console.log(`✉️ ¡Éxito! Correo enviado vía Gmail API a: ${destinatario}`);
     } catch (error) {
         console.error("⚠️ Error enviando correo con Gmail API:", error);
