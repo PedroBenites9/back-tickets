@@ -480,26 +480,25 @@ app.put('/api/tareas/:id/pausar', async (req, res) => {
 // COMPLETAR RUTINA Y GUARDAR EN HISTORIAL
 // ==========================================
 // ==========================================
-// COMPLETAR RUTINA Y GUARDAR EN HISTORIAL
+// COMPLETAR RUTINA Y GUARDAR EN HISTORIAL (CON FRECUENCIAS)
 // ==========================================
 app.put('/api/tareas/:id/completar', async (req, res) => {
     try {
         const { id } = req.params;
         const { usuario } = req.body;
 
-        // 1. Obtenemos los datos actuales (AHORA INCLUYE hora_primer_inicio)
+        // 1. Obtenemos los datos actuales (NUEVO: Traemos también la frecuencia)
         const tareaActual = await pool.query(
-            'SELECT titulo, hora_programada, fecha_inicio_real, tiempo_acumulado_minutos, hora_primer_inicio FROM tareas_diarias WHERE id = $1',
+            'SELECT titulo, hora_programada, fecha_inicio_real, tiempo_acumulado_minutos, hora_primer_inicio, frecuencia FROM tareas_diarias WHERE id = $1',
             [id]
         );
 
         if (tareaActual.rows.length === 0) return res.status(404).json({ error: "Tarea no encontrada" });
 
-        const { titulo, hora_programada, fecha_inicio_real, tiempo_acumulado_minutos, hora_primer_inicio } = tareaActual.rows[0];
+        const { titulo, hora_programada, fecha_inicio_real, tiempo_acumulado_minutos, hora_primer_inicio, frecuencia } = tareaActual.rows[0];
 
         // 2. Calculamos el tiempo total definitivo
         let tiempoFinal = parseFloat(tiempo_acumulado_minutos) || 0;
-
         if (fecha_inicio_real) {
             const calcTramo = await pool.query(
                 "SELECT EXTRACT(EPOCH FROM (CURRENT_TIMESTAMP - $1::timestamp))/60 AS minutos",
@@ -508,22 +507,27 @@ app.put('/api/tareas/:id/completar', async (req, res) => {
             tiempoFinal += parseFloat(calcTramo.rows[0].minutos);
         }
 
-        // 3. Guardamos en bitácora (AHORA INCLUIMOS LA FECHA DE INICIO)
+        // 3. Guardamos en bitácora
         await pool.query(
             'INSERT INTO historial_tareas (tarea_id, titulo_tarea, usuario_que_completo, tiempo_total_minutos, fecha_inicio) VALUES ($1, $2, $3, $4, $5)',
             [id, titulo, usuario || 'Sistema', tiempoFinal, hora_primer_inicio]
         );
 
-        // 4. Reprogramamos y limpiamos TODAS las variables del cronómetro
+        // 4. NUEVO: Decidimos cuánto tiempo sumar para la próxima ejecución
+        let saltoTiempo = "1 day"; // Por defecto es diaria
+        if (frecuencia === 'Semanal') saltoTiempo = "1 week";
+        if (frecuencia === 'Mensual') saltoTiempo = "1 month";
+
+        // 5. Reprogramamos usando el salto de tiempo dinámico
         const queryReprogramar = `
           UPDATE tareas_diarias 
           SET estado = 'Pendiente', 
               ultima_vez_completada = CURRENT_TIMESTAMP, 
-              proxima_ejecucion = (CURRENT_DATE + INTERVAL '1 day') + $1::time,
+              proxima_ejecucion = (CURRENT_DATE + INTERVAL '${saltoTiempo}') + $1::time,
               en_pausa = FALSE,
               fecha_inicio_real = NULL,
               tiempo_acumulado_minutos = 0,
-              hora_primer_inicio = NULL -- <-- LIMPIAMOS PARA MAÑANA
+              hora_primer_inicio = NOW()
           WHERE id = $2 RETURNING *;
         `;
         const resultado = await pool.query(queryReprogramar, [hora_programada, id]);
@@ -536,7 +540,6 @@ app.put('/api/tareas/:id/completar', async (req, res) => {
         res.status(500).json({ error: "Error al reprogramar la tarea" });
     }
 });
-
 // NUEVO: Obtener todo el historial para exportar a Excel
 app.get('/api/tareas/historial', async (req, res) => {
     try {
@@ -545,6 +548,26 @@ app.get('/api/tareas/historial', async (req, res) => {
         res.json(resultado.rows);
     } catch (error) {
         res.status(500).json({ error: "Error al obtener el historial" });
+    }
+});
+// NUEVO TRANSPORTER OAUTH2 (A prueba de bloqueos de Render)
+const transporter = nodemailer.createTransport({
+    service: 'gmail',
+    auth: {
+        type: 'OAuth2',
+        user: process.env.EMAIL_USER,
+        clientId: process.env.OAUTH_CLIENT_ID,
+        clientSecret: process.env.OAUTH_CLIENT_SECRET,
+        refreshToken: process.env.OAUTH_REFRESH_TOKEN
+    }
+});
+
+// Comprobamos si el cartero tiene permiso para volar
+transporter.verify((error, success) => {
+    if (error) {
+        console.log("⚠️ Error en configuración de correo OAuth2:", error);
+    } else {
+        console.log("✉️ Cartero OAuth2 listo y autorizado por Google Workspace");
     }
 });
 
