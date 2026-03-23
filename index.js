@@ -7,6 +7,8 @@ import jwt from 'jsonwebtoken'; // NUEVO: Para crear el token de sesión
 import http from 'http'; // NUEVO: Módulo nativo de Node
 import { Server } from 'socket.io'; // NUEVO: El motor de WebSockets
 import nodemailer from 'nodemailer';
+import { google } from 'googleapis';
+
 dotenv.config();
 
 const app = express();
@@ -17,7 +19,6 @@ const server = http.createServer(app);
 const io = new Server(server, {
     cors: { origin: "*" } // Permite que cualquier React se conecte al túnel
 });
-const { google } = require('googleapis');
 
 // 1. Configuramos el acceso VIP a Google usando tus llaves del .env
 const oAuth2Client = new google.auth.OAuth2(
