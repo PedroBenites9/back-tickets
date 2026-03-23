@@ -17,6 +17,51 @@ const server = http.createServer(app);
 const io = new Server(server, {
     cors: { origin: "*" } // Permite que cualquier React se conecte al túnel
 });
+const { google } = require('googleapis');
+
+// 1. Configuramos el acceso VIP a Google usando tus llaves del .env
+const oAuth2Client = new google.auth.OAuth2(
+    process.env.OAUTH_CLIENT_ID,
+    process.env.OAUTH_CLIENT_SECRET,
+    "https://developers.google.com/oauthplayground"
+);
+oAuth2Client.setCredentials({ refresh_token: process.env.OAUTH_REFRESH_TOKEN });
+
+const gmail = google.gmail({ version: 'v1', auth: oAuth2Client });
+
+// 2. Función maestra para enviar el correo por HTTP (¡Esquiva el bloqueo de Render!)
+const enviarCorreoMagico = async (destinatario, asunto, htmlContenido) => {
+    try {
+        // Armamos el correo en el formato exacto que pide Google
+        const mensajePuro = [
+            `To: ${destinatario}`,
+            `Subject: =?utf-8?B?${Buffer.from(asunto).toString('base64')}?=`,
+            "MIME-Version: 1.0",
+            "Content-Type: text/html; charset=utf-8",
+            "",
+            htmlContenido
+        ].join('\n');
+
+        // Lo codificamos para que viaje seguro por internet
+        const encodedMensaje = Buffer.from(mensajePuro)
+            .toString('base64')
+            .replace(/\+/g, '-')
+            .replace(/\//g, '_')
+            .replace(/=+$/, '');
+
+        // Le pedimos a la API de Gmail que lo envíe
+        // Ejemplo de cómo llamarlo cuando el ticket se resuelve:
+        await enviarCorreoMagico(
+            "correoDelUsuario@gmail.com",
+            "¡Tu ticket ha sido Resuelto!",
+            "<h1>Hola, tu problema IT está solucionado.</h1>"
+        );
+
+        console.log(`✉️ ¡Éxito! Correo enviado vía Gmail API a: ${destinatario}`);
+    } catch (error) {
+        console.error("⚠️ Error enviando correo con Gmail API:", error);
+    }
+};
 
 // ==========================================
 // CEREBRO MATEMÁTICO (Blindado contra Zonas Horarias de Argentina)
@@ -671,26 +716,6 @@ app.delete('/api/tareas/:id', async (req, res) => {
     } catch (error) {
         console.error("Error al eliminar la tarea:", error);
         res.status(500).json({ error: "Error interno al eliminar la tarea" });
-    }
-});
-// NUEVO TRANSPORTER OAUTH2 (A prueba de bloqueos de Render)
-const transporter = nodemailer.createTransport({
-    service: 'gmail',
-    auth: {
-        type: 'OAuth2',
-        user: process.env.EMAIL_USER,
-        clientId: process.env.OAUTH_CLIENT_ID,
-        clientSecret: process.env.OAUTH_CLIENT_SECRET,
-        refreshToken: process.env.OAUTH_REFRESH_TOKEN
-    }
-});
-
-// Comprobamos si el cartero tiene permiso para volar
-transporter.verify((error, success) => {
-    if (error) {
-        console.log("⚠️ Error en configuración de correo OAuth2:", error);
-    } else {
-        console.log("✉️ Cartero OAuth2 listo y autorizado por Google Workspace");
     }
 });
 
