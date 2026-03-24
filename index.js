@@ -528,8 +528,9 @@ app.put('/api/usuarios/:id/rol', async (req, res) => {
         res.status(500).json({ error: "Error al actualizar el rol del usuario" });
     }
 });
+
 // ==========================================
-// NUEVAS RUTAS: TAREAS RECURRENTES (PREVENTIVAS)
+// RUTAS: TAREAS RECURRENTES (PREVENTIVAS)
 // ==========================================
 
 // 1. Obtener todas las tareas programadas
@@ -545,7 +546,9 @@ app.get('/api/tareas', async (req, res) => {
     }
 });
 
-// 2. Crear una nueva rutina de mantenimiento (ACTUALIZADA)
+// ==========================================
+// RUTA: CREAR UNA TAREA
+// ==========================================
 app.post('/api/tareas', async (req, res) => {
     try {
         const { titulo, categoria, frecuencia, hora_programada, dias_especificos, fecha_unica } = req.body;
@@ -571,7 +574,7 @@ app.post('/api/tareas', async (req, res) => {
 });
 
 // ==========================================
-// NUEVO: INICIAR / REANUDAR TAREA (Cronómetro)
+// RUTA: INICIAR / REANUDAR TAREA (Cronómetro)
 // ==========================================
 app.put('/api/tareas/:id/iniciar', async (req, res) => {
     try {
@@ -599,7 +602,7 @@ app.put('/api/tareas/:id/iniciar', async (req, res) => {
 });
 
 // ==========================================
-// NUEVO: PAUSAR TAREA (Calcula tiempo)
+// RUTA: PAUSAR TAREA (Calcula tiempo)
 // ==========================================
 app.put('/api/tareas/:id/pausar', async (req, res) => {
     try {
@@ -634,7 +637,7 @@ app.put('/api/tareas/:id/pausar', async (req, res) => {
     }
 });
 // ==========================================
-// COMPLETAR RUTINA Y GUARDAR EN HISTORIAL (CEREBRO MATEMÁTICO)
+// RUTA: COMPLETAR RUTINA Y GUARDAR EN HISTORIAL (CEREBRO MATEMÁTICO)
 // ==========================================
 app.put('/api/tareas/:id/completar', async (req, res) => {
     try {
@@ -694,18 +697,9 @@ app.put('/api/tareas/:id/completar', async (req, res) => {
         res.status(500).json({ error: "Error al reprogramar la tarea" });
     }
 });
-// NUEVO: Obtener todo el historial para exportar a Excel
-app.get('/api/tareas/historial', async (req, res) => {
-    try {
-        const query = 'SELECT * FROM historial_tareas ORDER BY fecha_completada DESC';
-        const resultado = await pool.query(query);
-        res.json(resultado.rows);
-    } catch (error) {
-        res.status(500).json({ error: "Error al obtener el historial" });
-    }
-});
+
 // ==========================================
-// NUEVO: ELIMINAR TAREA (Y SU HISTORIAL)
+// RUTA: ELIMINAR TAREA (Y SU HISTORIAL)
 // ==========================================
 app.delete('/api/tareas/:id', async (req, res) => {
     try {
@@ -724,6 +718,55 @@ app.delete('/api/tareas/:id', async (req, res) => {
     } catch (error) {
         console.error("Error al eliminar la tarea:", error);
         res.status(500).json({ error: "Error interno al eliminar la tarea" });
+    }
+});
+
+// ==========================================
+// RUTA: EDITAR UNA TAREA/RUTINA EXISTENTE
+// ==========================================
+app.put('/api/tareas/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { titulo, categoria, frecuencia, hora_programada, dias_especificos, fecha_unica } = req.body;
+
+        // Aseguramos que los arrays se guarden como JSON si usas PostgreSQL
+        const diasFormateados = frecuencia === 'Dias Especificos' ? JSON.stringify(dias_especificos) : null;
+        const fechaFormateada = frecuencia === 'Fecha Unica' ? fecha_unica : null;
+
+        const query = `
+      UPDATE tareas 
+      SET titulo = $1, categoria = $2, frecuencia = $3, hora_programada = $4, dias_especificos = $5, fecha_unica = $6
+      WHERE id = $7 
+      RETURNING *;
+    `;
+
+        const values = [titulo, categoria, frecuencia, hora_programada, diasFormateados, fechaFormateada, id];
+        const result = await pool.query(query, values);
+
+        if (result.rows.length === 0) {
+            return res.status(404).json({ error: "Tarea no encontrada" });
+        }
+
+        const tareaActualizada = result.rows[0];
+
+        // Le avisamos a todos los conectados que la tarea cambió
+        io.emit('tareaModificada', tareaActualizada);
+
+        res.json(tareaActualizada);
+    } catch (error) {
+        console.error("❌ Error al editar la tarea:", error);
+        res.status(500).json({ error: "Error en el servidor al actualizar la tarea" });
+    }
+});
+
+// Obtener todo el historial para exportar a Excel
+app.get('/api/tareas/historial', async (req, res) => {
+    try {
+        const query = 'SELECT * FROM historial_tareas ORDER BY fecha_completada DESC';
+        const resultado = await pool.query(query);
+        res.json(resultado.rows);
+    } catch (error) {
+        res.status(500).json({ error: "Error al obtener el historial" });
     }
 });
 
