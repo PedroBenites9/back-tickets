@@ -734,7 +734,7 @@ app.put('/api/tareas/:id', async (req, res) => {
         const fechaFormateada = frecuencia === 'Fecha Unica' ? fecha_unica : null;
 
         const query = `
-      UPDATE tareas 
+      UPDATE tareas_diarias
       SET titulo = $1, categoria = $2, frecuencia = $3, hora_programada = $4, dias_especificos = $5, fecha_unica = $6
       WHERE id = $7 
       RETURNING *;
