@@ -337,33 +337,34 @@ app.get('/api/tickets', async (req, res) => {
     }
 });
 
-// Crear un nuevo ticket (CORREGIDO CON SECUENCIA TK-0001)
+// Crear un nuevo ticket (ACTUALIZADO CON CLIENTES)
 app.post('/api/tickets', async (req, res) => {
     try {
-        const { asunto, categoria, prioridad, descripcion, tipo_origen, solicitante } = req.body;
+        // ---> Agregamos 'cliente' a lo que recibimos <---
+        const { asunto, categoria, prioridad, descripcion, tipo_origen, solicitante, cliente } = req.body;
 
-        // 1. Le pedimos a PostgreSQL el siguiente ID de forma 100% segura (evita choques)
+        // ---> MAGIA: Si es externo y hay cliente, lo guardamos en la agenda automáticamente <---
+        if (tipo_origen === 'Externo' && cliente) {
+            await pool.query('INSERT INTO clientes (nombre) VALUES ($1) ON CONFLICT DO NOTHING', [cliente]);
+        }
+
         const seqResult = await pool.query("SELECT nextval('tickets_id_seq') AS next_id");
         const nextId = seqResult.rows[0].next_id;
-
-        // 2. Formateamos el número para que tenga 4 ceros (Ej: TK-0007)
         const codigo = `TK-${String(nextId).padStart(4, '0')}`;
 
-        // 3. Insertamos el ticket forzando ese ID y ese Código
+        // ---> Actualizamos el INSERT para meter el cliente <---
         const query = `
-          INSERT INTO tickets (id, codigo, asunto, categoria, prioridad, descripcion, tipo_origen, solicitante) 
-          VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *;
+          INSERT INTO tickets (id, codigo, asunto, categoria, prioridad, descripcion, tipo_origen, solicitante, cliente) 
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *;
         `;
 
-        const resultado = await pool.query(query, [nextId, codigo, asunto, categoria, prioridad, descripcion, tipo_origen, solicitante]);
+        const resultado = await pool.query(query, [nextId, codigo, asunto, categoria, prioridad, descripcion, tipo_origen, solicitante, cliente || null]);
         const ticketNuevo = resultado.rows[0];
-
-        io.emit('ticketCreado', ticketNuevo); // 📢 ¡Avisamos a todos!
-
+        io.emit('ticketCreado', ticketNuevo);
         res.json(ticketNuevo);
     } catch (error) {
         console.error("Error exacto en la BD:", error);
-        res.status(500).json({ error: "Error al crear ticket secuencial" });
+        res.status(500).json({ error: "Error al crear ticket" });
     }
 });
 
@@ -410,12 +411,12 @@ app.put('/api/tickets/:id/estado', async (req, res) => {
 app.put('/api/tickets/editar/:id', async (req, res) => {
     try {
         const { id } = req.params;
-        const { asunto, categoria, prioridad, descripcion, tipo_origen } = req.body;
+        const { asunto, categoria, prioridad, descripcion, tipo_origen, cliente } = req.body;
 
         const query = `
       UPDATE tickets 
-      SET asunto = $1, categoria = $2, prioridad = $3, descripcion = $4, tipo_origen = $5 
-      WHERE id = $6 
+      SET asunto = $1, categoria = $2, prioridad = $3, descripcion = $4, tipo_origen = $5, cliente = $6 
+      WHERE id = $7 
       RETURNING *;
     `;
         const valores = [asunto, categoria, prioridad, descripcion, tipo_origen, id];
@@ -512,7 +513,6 @@ app.post('/api/tickets/:id/comentarios', async (req, res) => {
       RETURNING *;
     `;
         const resultado = await pool.query(query, [id, autor, texto]);
-
         // ---> NUEVO: Avisamos al mundo que hay un nuevo mensaje <---
         io.emit('nuevoComentario', resultado.rows[0]);
 
