@@ -139,6 +139,31 @@ const pool = new Pool({
     ssl: { rejectUnauthorized: false }
 });
 
+// ==========================================
+// ACTUALIZACIÓN AUTOMÁTICA DE BASE DE DATOS
+// ==========================================
+const actualizarBaseDeDatos = async () => {
+    try {
+        // Creamos la agenda de clientes (si no existe)
+        await pool.query(`CREATE TABLE IF NOT EXISTS clientes (id SERIAL PRIMARY KEY, nombre VARCHAR(150) UNIQUE NOT NULL);`);
+        // Le agregamos la columna 'cliente' a los tickets (si no existe)
+        await pool.query(`ALTER TABLE tickets ADD COLUMN IF NOT EXISTS cliente VARCHAR(150);`);
+        console.log("✅ Base de datos actualizada con soporte para Clientes Externos.");
+    } catch (error) {
+        console.error("⚠️ Aviso al actualizar BD:", error.message);
+    }
+};
+actualizarBaseDeDatos();
+
+// NUEVA RUTA: Obtener la lista de clientes para el menú desplegable
+app.get('/api/clientes', async (req, res) => {
+    try {
+        const resultado = await pool.query('SELECT * FROM clientes ORDER BY nombre ASC');
+        res.json(resultado.rows);
+    } catch (error) {
+        res.status(500).json({ error: "Error al obtener clientes" });
+    }
+});
 
 // Función auxiliar para armar y enviar el correo
 // Función auxiliar para armar y enviar el correo (VERSIÓN OAUTH2 - API GMAIL)
@@ -729,22 +754,24 @@ app.put('/api/tareas/:id', async (req, res) => {
         const { id } = req.params;
         const { titulo, categoria, frecuencia, hora_programada, dias_especificos, fecha_unica } = req.body;
 
-        // Aseguramos que los arrays se guarden como JSON si usas PostgreSQL
-        const diasFormateados = frecuencia === 'Dias Especificos' ? JSON.stringify(dias_especificos) : null;
-        const fechaFormateada = frecuencia === 'Fecha Unica' ? fecha_unica : null;
+        // 1. Recalculamos la próxima ejecución por si el usuario cambió la hora o los días
+        const proxima = calcularProximaEjecucion(frecuencia, hora_programada, dias_especificos, fecha_unica, false);
+
+        // 2. Formateamos los días para PostgreSQL
+        const diasJson = dias_especificos ? JSON.stringify(dias_especificos) : '[]';
 
         const query = `
-      UPDATE tareas_diarias
-      SET titulo = $1, categoria = $2, frecuencia = $3, hora_programada = $4, dias_especificos = $5, fecha_unica = $6
-      WHERE id = $7 
-      RETURNING *;
-    `;
+          UPDATE tareas_diarias 
+          SET titulo = $1, categoria = $2, frecuencia = $3, hora_programada = $4, proxima_ejecucion = $5, dias_especificos = $6, fecha_unica = $7
+          WHERE id = $8 
+          RETURNING *;
+        `;
 
-        const values = [titulo, categoria, frecuencia, hora_programada, diasFormateados, fechaFormateada, id];
+        const values = [titulo, categoria, frecuencia, hora_programada, proxima, diasJson, fecha_unica || null, id];
         const result = await pool.query(query, values);
 
         if (result.rows.length === 0) {
-            return res.status(404).json({ error: "Tarea no encontrada" });
+            return res.status(404).json({ error: "Tarea no encontrada en la BD" });
         }
 
         const tareaActualizada = result.rows[0];
