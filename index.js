@@ -345,7 +345,7 @@ app.post('/api/tickets', async (req, res) => {
 
         // ---> MAGIA: Si es externo y hay cliente, lo guardamos en la agenda automáticamente <---
         if (tipo_origen === 'Externo' && cliente) {
-            await pool.query('INSERT INTO clientes (nombre) VALUES ($1) ON CONFLICT DO NOTHING', [cliente]);
+            await pool.query('INSERT INTO clientes (nombre) VALUES ($1) ON CONFLICT (nombre) DO NOTHING', [cliente]);
         }
 
         const seqResult = await pool.query("SELECT nextval('tickets_id_seq') AS next_id");
@@ -419,7 +419,7 @@ app.put('/api/tickets/editar/:id', async (req, res) => {
       WHERE id = $7 
       RETURNING *;
     `;
-        const valores = [asunto, categoria, prioridad, descripcion, tipo_origen, id];
+        const valores = [asunto, categoria, prioridad, descripcion, tipo_origen, cliente || null, id];
 
         const resultado = await pool.query(query, valores);
         const ticketNuevo = resultado.rows[0];
