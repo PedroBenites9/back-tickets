@@ -345,7 +345,11 @@ app.post('/api/tickets', async (req, res) => {
 
         // ---> MAGIA: Si es externo y hay cliente, lo guardamos en la agenda automáticamente <---
         if (tipo_origen === 'Externo' && cliente) {
-            await pool.query('INSERT INTO clientes (nombre) VALUES ($1) ON CONFLICT (nombre) DO NOTHING', [cliente]);
+            const clienteGuardado = await pool.query('INSERT INTO clientes (nombre) VALUES ($1) ON CONFLICT (nombre) DO NOTHING RETURNING *', [cliente]);
+            // Si el cliente era nuevo y se guardó, le avisamos a todos
+            if (clienteGuardado.rowCount > 0) {
+                io.emit('clienteCreado', clienteGuardado.rows[0]);
+            }
         }
 
         const seqResult = await pool.query("SELECT nextval('tickets_id_seq') AS next_id");
@@ -407,24 +411,37 @@ app.put('/api/tickets/:id/estado', async (req, res) => {
 // ==========================================
 // NUEVA RUTA: EDICIÓN COMPLETA DEL TICKET (PUT)
 // ==========================================
-// Editar un ticket completo (Actualizado con tipo_origen)
+// Editar un ticket completo (Actualizado con tipo_origen y WebSockets para clientes)
 app.put('/api/tickets/editar/:id', async (req, res) => {
     try {
         const { id } = req.params;
         const { asunto, categoria, prioridad, descripcion, tipo_origen, cliente } = req.body;
 
+        // ---> MAGIA: Si es externo y escribieron un cliente, lo guardamos en la agenda <---
+        if (tipo_origen === 'Externo' && cliente) {
+            const clienteGuardado = await pool.query(
+                'INSERT INTO clientes (nombre) VALUES ($1) ON CONFLICT (nombre) DO NOTHING RETURNING *',
+                [cliente]
+            );
+
+            // Si rowCount es mayor a 0, significa que el cliente NO existía y se acaba de crear
+            if (clienteGuardado.rowCount > 0) {
+                io.emit('clienteCreado', clienteGuardado.rows[0]); // 📢 ¡Avisamos a React en tiempo real!
+            }
+        }
+
         const query = `
-      UPDATE tickets 
-      SET asunto = $1, categoria = $2, prioridad = $3, descripcion = $4, tipo_origen = $5, cliente = $6 
-      WHERE id = $7 
-      RETURNING *;
-    `;
+          UPDATE tickets 
+          SET asunto = $1, categoria = $2, prioridad = $3, descripcion = $4, tipo_origen = $5, cliente = $6 
+          WHERE id = $7 
+          RETURNING *;
+        `;
         const valores = [asunto, categoria, prioridad, descripcion, tipo_origen, cliente || null, id];
 
         const resultado = await pool.query(query, valores);
         const ticketNuevo = resultado.rows[0];
 
-        io.emit('ticketModificado', ticketNuevo);// 📢 ¡Avisamos a todos!
+        io.emit('ticketModificado', ticketNuevo); // 📢 ¡Avisamos a todos que el ticket cambió!
 
         res.json(ticketNuevo);
     } catch (error) {
