@@ -813,6 +813,100 @@ app.get('/api/tareas/historial', async (req, res) => {
         res.status(500).json({ error: "Error al obtener el historial" });
     }
 });
+// ==========================================
+// SOLICITAR CÓDIGO DE RECUPERACIÓN
+// ==========================================
+app.post('/api/auth/solicitar-recuperacion', async (req, res) => {
+    const { email } = req.body;
+
+    try {
+        // 1. Verificamos si el usuario existe
+        const usuarioRes = await pool.query('SELECT * FROM usuarios WHERE email = $1', [email]);
+        if (usuarioRes.rows.length === 0) {
+            return res.status(404).json({ error: "No existe un usuario con ese correo." });
+        }
+
+        // 2. Generamos un código de 6 dígitos aleatorio
+        const codigo = Math.floor(100000 + Math.random() * 900000).toString();
+
+        // 3. Calculamos la fecha de vencimiento (15 minutos desde ahora)
+        const vencimiento = new Date();
+        vencimiento.setMinutes(vencimiento.getMinutes() + 15);
+
+        // 4. Guardamos el código en la base de datos
+        await pool.query(
+            'UPDATE usuarios SET codigo_recuperacion = $1, vencimiento_codigo = $2 WHERE email = $3',
+            [codigo, vencimiento, email]
+        );
+
+        // 5. Enviamos el correo con el código (usando tu transporter que ya existe)
+        const mailOptions = {
+            from: process.env.EMAIL_USER,
+            to: email,
+            subject: '🔑 Código de Recuperación - Sistema de Tickets',
+            html: `
+        <div style="font-family: Arial, sans-serif; padding: 20px; color: #333;">
+          <h2 style="color: #0d6efd;">Recuperación de Contraseña</h2>
+          <p>Hola,</p>
+          <p>Has solicitado restablecer tu contraseña. Tu código de seguridad de 6 dígitos es:</p>
+          <div style="font-size: 24px; font-weight: bold; background: #f8f9fa; padding: 10px; text-align: center; letter-spacing: 5px; border-radius: 5px; margin: 20px 0;">
+            ${codigo}
+          </div>
+          <p style="color: #dc3545; font-size: 0.9em;">Este código expirará en 15 minutos.</p>
+          <p>Si no solicitaste este cambio, puedes ignorar este correo de forma segura.</p>
+        </div>
+      `
+        };
+
+        await transporter.sendMail(mailOptions);
+        res.json({ mensaje: "Código enviado con éxito." });
+
+    } catch (error) {
+        console.error("Error al solicitar recuperación:", error);
+        res.status(500).json({ error: "Error interno del servidor" });
+    }
+});
+// ==========================================
+// VALIDAR CÓDIGO Y CAMBIAR CONTRASEÑA
+// ==========================================
+app.post('/api/auth/cambiar-password', async (req, res) => {
+    const { email, codigo, nuevaPassword } = req.body;
+
+    try {
+        // 1. Buscamos al usuario
+        const usuarioRes = await pool.query('SELECT * FROM usuarios WHERE email = $1', [email]);
+        if (usuarioRes.rows.length === 0) return res.status(404).json({ error: "Usuario no encontrado." });
+
+        const usuario = usuarioRes.rows[0];
+
+        // 2. Verificamos que el código coincida
+        if (usuario.codigo_recuperacion !== codigo) {
+            return res.status(400).json({ error: "El código es incorrecto." });
+        }
+
+        // 3. Verificamos que no esté vencido
+        const ahora = new Date();
+        if (ahora > new Date(usuario.vencimiento_codigo)) {
+            return res.status(400).json({ error: "El código ha expirado. Por favor solicita uno nuevo." });
+        }
+
+        // 4. Encriptamos la nueva contraseña
+        const salt = await bcrypt.genSalt(10);
+        const passwordEncriptada = await bcrypt.hash(nuevaPassword, salt);
+
+        // 5. Actualizamos la base de datos y borramos el código usado
+        await pool.query(
+            'UPDATE usuarios SET password = $1, codigo_recuperacion = NULL, vencimiento_codigo = NULL WHERE email = $2',
+            [passwordEncriptada, email]
+        );
+
+        res.json({ mensaje: "Contraseña actualizada correctamente." });
+
+    } catch (error) {
+        console.error("Error al cambiar contraseña:", error);
+        res.status(500).json({ error: "Error interno del servidor" });
+    }
+});
 
 // Antes decía app.listen... ahora es server.listen
 server.listen(PORT, () => {
