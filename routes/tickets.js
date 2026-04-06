@@ -8,18 +8,18 @@ export default function ticketRoutes(io) {
     // Obtener todos los tickets
     router.get('/', async (req, res) => {
         try {
+            // MariaDB usa INTERVAL X DAY en lugar de INTERVAL 'X days'
             await pool.query(`
               UPDATE tickets 
               SET estado = 'Cerrado Definitivo' 
               WHERE estado = 'Resuelto' 
-              AND fecha_finalizado <= NOW() - INTERVAL '5 days'
+              AND fecha_finalizado <= NOW() - INTERVAL 5 DAY
             `);
 
-            const query = 'SELECT * FROM tickets ORDER BY id DESC';
-            const resultado = await pool.query(query);
-            res.json(resultado.rows);
+            const [tickets] = await pool.query('SELECT * FROM tickets ORDER BY id DESC');
+            res.json(tickets);
         } catch (error) {
-            console.error(error);
+            console.error("Error al obtener tickets:", error);
             res.status(500).json({ error: "Error al obtener los tickets" });
         }
     });
@@ -29,28 +29,37 @@ export default function ticketRoutes(io) {
         try {
             const { asunto, categoria, prioridad, descripcion, tipo_origen, solicitante, cliente } = req.body;
 
+            // Manejo de Clientes: INSERT IGNORE evita errores si el nombre ya existe
             if (tipo_origen === 'Externo' && cliente) {
-                const clienteGuardado = await pool.query('INSERT INTO clientes (nombre) VALUES ($1) ON CONFLICT (nombre) DO NOTHING RETURNING *', [cliente]);
-                if (clienteGuardado.rowCount > 0) {
-                    io.emit('clienteCreado', clienteGuardado.rows[0]);
+                const [clienteGuardado] = await pool.query('INSERT IGNORE INTO clientes (nombre) VALUES (?)', [cliente]);
+                if (clienteGuardado.insertId) { // Si insertId > 0, es un cliente nuevo
+                    const [nuevoCliente] = await pool.query('SELECT * FROM clientes WHERE id = ?', [clienteGuardado.insertId]);
+                    io.emit('clienteCreado', nuevoCliente[0]);
                 }
             }
 
-            const seqResult = await pool.query("SELECT nextval('tickets_id_seq') AS next_id");
-            const nextId = seqResult.rows[0].next_id;
+            // 1. Insertamos el ticket sin código todavía
+            const queryInsert = `
+              INSERT INTO tickets (asunto, categoria, prioridad, descripcion, tipo_origen, solicitante, cliente) 
+              VALUES (?, ?, ?, ?, ?, ?, ?)
+            `;
+            const [resultadoInsert] = await pool.query(queryInsert, [asunto, categoria, prioridad, descripcion, tipo_origen, solicitante, cliente || null]);
+
+            // 2. Usamos el ID autoincremental para armar el TK-XXXX
+            const nextId = resultadoInsert.insertId;
             const codigo = `TK-${String(nextId).padStart(4, '0')}`;
 
-            const query = `
-              INSERT INTO tickets (id, codigo, asunto, categoria, prioridad, descripcion, tipo_origen, solicitante, cliente) 
-              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *;
-            `;
+            // 3. Actualizamos la fila con el código generado
+            await pool.query('UPDATE tickets SET codigo = ? WHERE id = ?', [codigo, nextId]);
 
-            const resultado = await pool.query(query, [nextId, codigo, asunto, categoria, prioridad, descripcion, tipo_origen, solicitante, cliente || null]);
-            const ticketNuevo = resultado.rows[0];
+            // 4. Buscamos el ticket completo para devolverlo al Frontend y por Sockets
+            const [ticketsNuevos] = await pool.query('SELECT * FROM tickets WHERE id = ?', [nextId]);
+            const ticketNuevo = ticketsNuevos[0];
+
             io.emit('ticketCreado', ticketNuevo);
             res.json(ticketNuevo);
         } catch (error) {
-            console.error("Error exacto en la BD:", error);
+            console.error("Error al crear ticket:", error);
             res.status(500).json({ error: "Error al crear ticket" });
         }
     });
@@ -60,30 +69,34 @@ export default function ticketRoutes(io) {
         try {
             const { id } = req.params;
             const { estado } = req.body;
-            let query = '';
 
-            if (estado === 'Resuelto') {
-                query = "UPDATE tickets SET estado = $1, fecha_finalizado = CURRENT_TIMESTAMP WHERE id = $2 RETURNING *";
-            } else {
-                query = "UPDATE tickets SET estado = $1, fecha_finalizado = NULL WHERE id = $2 RETURNING *";
-            }
+            // Lógica condicional dentro de la consulta SQL para la fecha
+            const query = `
+              UPDATE tickets 
+              SET estado = ?, 
+                  fecha_finalizado = IF(? = 'Resuelto', CURRENT_TIMESTAMP, NULL) 
+              WHERE id = ?
+            `;
+            await pool.query(query, [estado, estado, id]);
 
-            const resultado = await pool.query(query, [estado, id]);
-            const ticketNuevo = resultado.rows[0];
+            // Recuperamos el ticket modificado
+            const [ticketsModificados] = await pool.query('SELECT * FROM tickets WHERE id = ?', [id]);
+            const ticketNuevo = ticketsModificados[0];
 
             io.emit('ticketModificado', ticketNuevo);
 
+            // Enviar correo si está resuelto
             if (estado === 'Resuelto') {
-                const usuarioSolicitante = await pool.query('SELECT email FROM usuarios WHERE nombre = $1', [ticketNuevo.solicitante]);
-                if (usuarioSolicitante.rows.length > 0) {
-                    const emailDestino = usuarioSolicitante.rows[0].email;
+                const [usuarioSolicitante] = await pool.query('SELECT email FROM usuarios WHERE nombre = ?', [ticketNuevo.solicitante]);
+                if (usuarioSolicitante.length > 0) {
+                    const emailDestino = usuarioSolicitante[0].email;
                     enviarCorreoResolucion(emailDestino, ticketNuevo);
                 }
             }
 
             res.json(ticketNuevo);
         } catch (error) {
-            console.error(error);
+            console.error("Error al cambiar estado:", error);
             res.status(500).json({ error: "Error al cambiar el estado" });
         }
     });
@@ -95,30 +108,27 @@ export default function ticketRoutes(io) {
             const { asunto, categoria, prioridad, descripcion, tipo_origen, cliente } = req.body;
 
             if (tipo_origen === 'Externo' && cliente) {
-                const clienteGuardado = await pool.query(
-                    'INSERT INTO clientes (nombre) VALUES ($1) ON CONFLICT (nombre) DO NOTHING RETURNING *',
-                    [cliente]
-                );
-                if (clienteGuardado.rowCount > 0) {
-                    io.emit('clienteCreado', clienteGuardado.rows[0]);
+                const [clienteGuardado] = await pool.query('INSERT IGNORE INTO clientes (nombre) VALUES (?)', [cliente]);
+                if (clienteGuardado.insertId) {
+                    const [nuevoCliente] = await pool.query('SELECT * FROM clientes WHERE id = ?', [clienteGuardado.insertId]);
+                    io.emit('clienteCreado', nuevoCliente[0]);
                 }
             }
 
             const query = `
               UPDATE tickets 
-              SET asunto = $1, categoria = $2, prioridad = $3, descripcion = $4, tipo_origen = $5, cliente = $6 
-              WHERE id = $7 
-              RETURNING *;
+              SET asunto = ?, categoria = ?, prioridad = ?, descripcion = ?, tipo_origen = ?, cliente = ? 
+              WHERE id = ?
             `;
-            const valores = [asunto, categoria, prioridad, descripcion, tipo_origen, cliente || null, id];
+            await pool.query(query, [asunto, categoria, prioridad, descripcion, tipo_origen, cliente || null, id]);
 
-            const resultado = await pool.query(query, valores);
-            const ticketNuevo = resultado.rows[0];
+            const [ticketsModificados] = await pool.query('SELECT * FROM tickets WHERE id = ?', [id]);
+            const ticketNuevo = ticketsModificados[0];
 
             io.emit('ticketModificado', ticketNuevo);
             res.json(ticketNuevo);
         } catch (error) {
-            console.error(error);
+            console.error("Error al editar:", error);
             res.status(500).json({ error: "Error al editar el ticket" });
         }
     });
@@ -129,19 +139,15 @@ export default function ticketRoutes(io) {
             const { id } = req.params;
             const { tecnico } = req.body;
 
-            const query = `
-          UPDATE tickets 
-          SET tecnico_asignado = $1 
-          WHERE id = $2 
-          RETURNING *;
-        `;
-            const resultado = await pool.query(query, [tecnico, id]);
-            const ticketNuevo = resultado.rows[0];
+            await pool.query('UPDATE tickets SET tecnico_asignado = ? WHERE id = ?', [tecnico, id]);
+
+            const [ticketsModificados] = await pool.query('SELECT * FROM tickets WHERE id = ?', [id]);
+            const ticketNuevo = ticketsModificados[0];
 
             io.emit('ticketModificado', ticketNuevo);
             res.json(ticketNuevo);
         } catch (error) {
-            console.error(error);
+            console.error("Error al asignar técnico:", error);
             res.status(500).json({ error: "Error al asignar técnico" });
         }
     });
@@ -150,7 +156,8 @@ export default function ticketRoutes(io) {
     router.delete('/:id', async (req, res) => {
         try {
             const { id } = req.params;
-            await pool.query('DELETE FROM tickets WHERE id = $1', [id]);
+            await pool.query('DELETE FROM comentarios WHERE ticket_id = ?', [id]); // Borramos comentarios primero (clave foránea)
+            await pool.query('DELETE FROM tickets WHERE id = ?', [id]);
             res.json({ mensaje: 'Ticket eliminado correctamente' });
         } catch (error) {
             console.error("Error al eliminar:", error);
@@ -162,10 +169,10 @@ export default function ticketRoutes(io) {
     router.get('/:id/comentarios', async (req, res) => {
         try {
             const { id } = req.params;
-            const resultado = await pool.query('SELECT * FROM comentarios WHERE ticket_id = $1 ORDER BY fecha ASC', [id]);
-            res.json(resultado.rows);
+            const [comentarios] = await pool.query('SELECT * FROM comentarios WHERE ticket_id = ? ORDER BY fecha ASC', [id]);
+            res.json(comentarios);
         } catch (error) {
-            console.error(error);
+            console.error("Error en comentarios:", error);
             res.status(500).json({ error: "Error al cargar los comentarios" });
         }
     });
@@ -175,16 +182,13 @@ export default function ticketRoutes(io) {
             const { id } = req.params;
             const { autor, texto } = req.body;
 
-            const query = `
-          INSERT INTO comentarios (ticket_id, autor, texto) 
-          VALUES ($1, $2, $3) 
-          RETURNING *;
-        `;
-            const resultado = await pool.query(query, [id, autor, texto]);
-            io.emit('nuevoComentario', resultado.rows[0]);
-            res.json(resultado.rows[0]);
+            const [resultado] = await pool.query('INSERT INTO comentarios (ticket_id, autor, texto) VALUES (?, ?, ?)', [id, autor, texto]);
+
+            const [nuevoComentario] = await pool.query('SELECT * FROM comentarios WHERE id = ?', [resultado.insertId]);
+            io.emit('nuevoComentario', nuevoComentario[0]);
+            res.json(nuevoComentario[0]);
         } catch (error) {
-            console.error(error);
+            console.error("Error al crear comentario:", error);
             res.status(500).json({ error: "Error al guardar el comentario" });
         }
     });

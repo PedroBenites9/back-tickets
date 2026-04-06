@@ -5,9 +5,11 @@ const router = express.Router();
 
 router.get('/', async (req, res) => {
     try {
-        const resultado = await pool.query('SELECT * FROM clientes ORDER BY nombre ASC');
-        res.json(resultado.rows);
+        // Usamos desestructuración de arreglos [clientes]
+        const [clientes] = await pool.query('SELECT * FROM clientes ORDER BY nombre ASC');
+        res.json(clientes);
     } catch (error) {
+        console.error(error);
         res.status(500).json({ error: "Error al obtener clientes" });
     }
 });

@@ -1,2 +1,8 @@
 .env
 node_modules
+system1.js
+auth1.js
+tickets1.js
+clientes1.js
+usuarios1.js
+tareas1.js
