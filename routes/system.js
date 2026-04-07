@@ -4,9 +4,9 @@ import pool from '../db.js';
 const router = express.Router();
 
 router.get('/instalar', async (req, res) => {
-    try {
-        // MariaDB usa INT AUTO_INCREMENT en vez de SERIAL
-        await pool.query(`
+  try {
+    // MariaDB usa INT AUTO_INCREMENT en vez de SERIAL
+    await pool.query(`
           CREATE TABLE IF NOT EXISTS usuarios (
             id INT AUTO_INCREMENT PRIMARY KEY,
             nombre VARCHAR(100) NOT NULL,
@@ -20,10 +20,10 @@ router.get('/instalar', async (req, res) => {
           );
         `);
 
-        await pool.query(`
+    await pool.query(`
           CREATE TABLE IF NOT EXISTS tickets (
             id INT AUTO_INCREMENT PRIMARY KEY,
-            codigo VARCHAR(20) UNIQUE NOT NULL,
+            codigo VARCHAR(20) UNIQUE,
             asunto VARCHAR(255) NOT NULL,
             categoria VARCHAR(100) NOT NULL,
             prioridad VARCHAR(50) NOT NULL,
@@ -38,11 +38,11 @@ router.get('/instalar', async (req, res) => {
           );
         `);
 
-        res.json({ mensaje: "¡Tablas de 'usuarios' y 'tickets' listas en MariaDB!" });
-    } catch (error) {
-        console.error("Error al instalar tablas:", error);
-        res.status(500).json({ error: "Hubo un problema al crear las tablas en MariaDB" });
-    }
+    res.json({ mensaje: "¡Tablas de 'usuarios' y 'tickets' listas en MariaDB!" });
+  } catch (error) {
+    console.error("Error al instalar tablas:", error);
+    res.status(500).json({ error: "Hubo un problema al crear las tablas en MariaDB" });
+  }
 });
 
 export default router;
