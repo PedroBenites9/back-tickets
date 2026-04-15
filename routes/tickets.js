@@ -14,9 +14,10 @@ export default function ticketRoutes(io) {
               SET estado = 'Cerrado Definitivo' 
               WHERE estado = 'Resuelto' 
               AND fecha_finalizado <= NOW() - INTERVAL 5 DAY
+              AND status = 1
             `);
 
-            const [tickets] = await pool.query('SELECT * FROM tickets ORDER BY id DESC');
+            const [tickets] = await pool.query('SELECT * FROM tickets WHERE status = 1 ORDER BY id DESC');
             res.json(tickets);
         } catch (error) {
             console.error("Error al obtener tickets:", error);
@@ -33,7 +34,7 @@ export default function ticketRoutes(io) {
             if (tipo_origen === 'Externo' && cliente) {
                 const [clienteGuardado] = await pool.query('INSERT IGNORE INTO clientes (nombre) VALUES (?)', [cliente]);
                 if (clienteGuardado.insertId) { // Si insertId > 0, es un cliente nuevo
-                    const [nuevoCliente] = await pool.query('SELECT * FROM clientes WHERE id = ?', [clienteGuardado.insertId]);
+                    const [nuevoCliente] = await pool.query('SELECT * FROM clientes WHERE id = ? AND status = 1', [clienteGuardado.insertId]);
                     io.emit('clienteCreado', nuevoCliente[0]);
                 }
             }
@@ -53,7 +54,7 @@ export default function ticketRoutes(io) {
             await pool.query('UPDATE tickets SET codigo = ? WHERE id = ?', [codigo, nextId]);
 
             // 4. Buscamos el ticket completo para devolverlo al Frontend y por Sockets
-            const [ticketsNuevos] = await pool.query('SELECT * FROM tickets WHERE id = ?', [nextId]);
+            const [ticketsNuevos] = await pool.query('SELECT * FROM tickets WHERE id = ? AND status = 1', [nextId]);
             const ticketNuevo = ticketsNuevos[0];
 
             io.emit('ticketCreado', ticketNuevo);
@@ -75,19 +76,19 @@ export default function ticketRoutes(io) {
               UPDATE tickets 
               SET estado = ?, 
                   fecha_finalizado = IF(? = 'Resuelto', CURRENT_TIMESTAMP, NULL) 
-              WHERE id = ?
+              WHERE id = ? AND status = 1
             `;
             await pool.query(query, [estado, estado, id]);
 
             // Recuperamos el ticket modificado
-            const [ticketsModificados] = await pool.query('SELECT * FROM tickets WHERE id = ?', [id]);
+            const [ticketsModificados] = await pool.query('SELECT * FROM tickets WHERE id = ? AND status = 1', [id]);
             const ticketNuevo = ticketsModificados[0];
 
             io.emit('ticketModificado', ticketNuevo);
 
             // Enviar correo si está resuelto
             if (estado === 'Resuelto') {
-                const [usuarioSolicitante] = await pool.query('SELECT email FROM usuarios WHERE nombre = ?', [ticketNuevo.solicitante]);
+                const [usuarioSolicitante] = await pool.query('SELECT email FROM usuarios WHERE nombre = ? AND status = 1', [ticketNuevo.solicitante]);
                 if (usuarioSolicitante.length > 0) {
                     const emailDestino = usuarioSolicitante[0].email;
                     enviarCorreoResolucion(emailDestino, ticketNuevo);
@@ -110,7 +111,7 @@ export default function ticketRoutes(io) {
             if (tipo_origen === 'Externo' && cliente) {
                 const [clienteGuardado] = await pool.query('INSERT IGNORE INTO clientes (nombre) VALUES (?)', [cliente]);
                 if (clienteGuardado.insertId) {
-                    const [nuevoCliente] = await pool.query('SELECT * FROM clientes WHERE id = ?', [clienteGuardado.insertId]);
+                    const [nuevoCliente] = await pool.query('SELECT * FROM clientes WHERE id = ? AND status = 1', [clienteGuardado.insertId]);
                     io.emit('clienteCreado', nuevoCliente[0]);
                 }
             }
@@ -118,11 +119,11 @@ export default function ticketRoutes(io) {
             const query = `
               UPDATE tickets 
               SET asunto = ?, categoria = ?, prioridad = ?, descripcion = ?, tipo_origen = ?, cliente = ? 
-              WHERE id = ?
+              WHERE id = ? AND status = 1
             `;
             await pool.query(query, [asunto, categoria, prioridad, descripcion, tipo_origen, cliente || null, id]);
 
-            const [ticketsModificados] = await pool.query('SELECT * FROM tickets WHERE id = ?', [id]);
+            const [ticketsModificados] = await pool.query('SELECT * FROM tickets WHERE id = ? AND status = 1', [id]);
             const ticketNuevo = ticketsModificados[0];
 
             io.emit('ticketModificado', ticketNuevo);
@@ -139,9 +140,9 @@ export default function ticketRoutes(io) {
             const { id } = req.params;
             const { tecnico } = req.body;
 
-            await pool.query('UPDATE tickets SET tecnico_asignado = ? WHERE id = ?', [tecnico, id]);
+            await pool.query('UPDATE tickets SET tecnico_asignado = ? WHERE id = ? AND status = 1', [tecnico, id]);
 
-            const [ticketsModificados] = await pool.query('SELECT * FROM tickets WHERE id = ?', [id]);
+            const [ticketsModificados] = await pool.query('SELECT * FROM tickets WHERE id = ? AND status = 1', [id]);
             const ticketNuevo = ticketsModificados[0];
 
             io.emit('ticketModificado', ticketNuevo);
@@ -156,8 +157,8 @@ export default function ticketRoutes(io) {
     router.delete('/:id', async (req, res) => {
         try {
             const { id } = req.params;
-            await pool.query('DELETE FROM comentarios WHERE ticket_id = ?', [id]); // Borramos comentarios primero (clave foránea)
-            await pool.query('DELETE FROM tickets WHERE id = ?', [id]);
+            await pool.query('UPDATE comentarios SET status = 0 WHERE ticket_id = ?', [id]);
+            await pool.query('UPDATE tickets SET status = 0 WHERE id = ?', [id]);
             res.json({ mensaje: 'Ticket eliminado correctamente' });
         } catch (error) {
             console.error("Error al eliminar:", error);
@@ -169,7 +170,7 @@ export default function ticketRoutes(io) {
     router.get('/:id/comentarios', async (req, res) => {
         try {
             const { id } = req.params;
-            const [comentarios] = await pool.query('SELECT * FROM comentarios WHERE ticket_id = ? ORDER BY fecha ASC', [id]);
+            const [comentarios] = await pool.query('SELECT * FROM comentarios WHERE ticket_id = ? AND status = 1 ORDER BY fecha_creacion ASC', [id]);
             res.json(comentarios);
         } catch (error) {
             console.error("Error en comentarios:", error);
@@ -182,9 +183,9 @@ export default function ticketRoutes(io) {
             const { id } = req.params;
             const { autor, texto } = req.body;
 
-            const [resultado] = await pool.query('INSERT INTO comentarios (ticket_id, autor, texto) VALUES (?, ?, ?)', [id, autor, texto]);
+            const [resultado] = await pool.query('INSERT INTO comentarios (ticket_id, autor, mensaje) VALUES (?, ?, ?)', [id, autor, texto]);
 
-            const [nuevoComentario] = await pool.query('SELECT * FROM comentarios WHERE id = ?', [resultado.insertId]);
+            const [nuevoComentario] = await pool.query('SELECT * FROM comentarios WHERE id = ? AND status = 1', [resultado.insertId]);
             io.emit('nuevoComentario', nuevoComentario[0]);
             res.json(nuevoComentario[0]);
         } catch (error) {

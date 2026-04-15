@@ -12,7 +12,7 @@ router.post('/registro', async (req, res) => {
         const { nombre, email, password, area } = req.body;
 
         // 1. Extraemos directamente las filas usando [usuarioExistente] y el símbolo ?
-        const [usuarioExistente] = await pool.query('SELECT * FROM usuarios WHERE email = ?', [email]);
+        const [usuarioExistente] = await pool.query('SELECT * FROM usuarios WHERE email = ? AND status = 1', [email]);
         if (usuarioExistente.length > 0) return res.status(400).json({ error: "Este correo ya está registrado" });
 
         const saltos = 10;
@@ -37,7 +37,7 @@ router.post('/registro', async (req, res) => {
 router.post('/login', async (req, res) => {
     try {
         const { email, password } = req.body;
-        const [usuarios] = await pool.query('SELECT id, nombre, email, password, rol, area FROM usuarios WHERE email = ?', [email]);
+        const [usuarios] = await pool.query('SELECT id, nombre, email, password, rol, area FROM usuarios WHERE email = ? AND status = 1', [email]);
 
         if (usuarios.length === 0) return res.status(401).json({ error: "Usuario no encontrado" });
 
@@ -56,7 +56,7 @@ router.post('/login', async (req, res) => {
 router.post('/auth/solicitar-recuperacion', async (req, res) => {
     const { email } = req.body;
     try {
-        const [usuarios] = await pool.query('SELECT * FROM usuarios WHERE email = ?', [email]);
+        const [usuarios] = await pool.query('SELECT * FROM usuarios WHERE email = ? AND status = 1', [email]);
         if (usuarios.length === 0) return res.status(404).json({ error: "No existe un usuario con ese correo." });
 
         const codigo = Math.floor(100000 + Math.random() * 900000).toString();
@@ -88,7 +88,7 @@ router.post('/auth/solicitar-recuperacion', async (req, res) => {
 router.post('/auth/cambiar-password', async (req, res) => {
     const { email, codigo, nuevaPassword } = req.body;
     try {
-        const [usuarios] = await pool.query('SELECT * FROM usuarios WHERE email = ?', [email]);
+        const [usuarios] = await pool.query('SELECT * FROM usuarios WHERE email = ? AND status = 1', [email]);
         if (usuarios.length === 0) return res.status(404).json({ error: "Usuario no encontrado." });
 
         const usuario = usuarios[0];

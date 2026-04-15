@@ -16,6 +16,7 @@ router.get('/instalar', async (req, res) => {
             area VARCHAR(100) DEFAULT 'Sin Asignar',
             codigo_recuperacion VARCHAR(6),
             vencimiento_codigo DATETIME,
+            status INT DEFAULT 1,
             fecha_registro TIMESTAMP DEFAULT CURRENT_TIMESTAMP
           );
         `);
@@ -33,6 +34,7 @@ router.get('/instalar', async (req, res) => {
             solicitante VARCHAR(100),
             cliente VARCHAR(150),
             tecnico_asignado VARCHAR(100),
+            status INT DEFAULT 1,
             fecha_creacion TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             fecha_finalizado TIMESTAMP NULL
           );

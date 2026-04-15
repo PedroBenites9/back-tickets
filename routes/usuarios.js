@@ -6,7 +6,7 @@ const router = express.Router();
 // Obtener lista de usuarios
 router.get('/', async (req, res) => {
     try {
-        const [usuarios] = await pool.query('SELECT id, nombre, email, rol, area FROM usuarios ORDER BY nombre ASC');
+        const [usuarios] = await pool.query('SELECT id, nombre, email, rol, area FROM usuarios WHERE status = 1 ORDER BY nombre ASC');
         res.json(usuarios);
     } catch (error) {
         console.error(error);
@@ -21,10 +21,10 @@ router.put('/:id/rol', async (req, res) => {
         const { rol } = req.body;
 
         // 1. Actualizamos el rol usando ?
-        await pool.query('UPDATE usuarios SET rol = ? WHERE id = ?', [rol, id]);
+        await pool.query('UPDATE usuarios SET rol = ? WHERE id = ? AND status = 1', [rol, id]);
 
         // 2. Buscamos el usuario actualizado para devolverlo
-        const [usuariosActualizados] = await pool.query('SELECT id, nombre, email, rol FROM usuarios WHERE id = ?', [id]);
+        const [usuariosActualizados] = await pool.query('SELECT id, nombre, email, rol FROM usuarios WHERE id = ? AND status = 1', [id]);
 
         res.json(usuariosActualizados[0]);
     } catch (error) {

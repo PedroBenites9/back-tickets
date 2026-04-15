@@ -7,7 +7,7 @@ export function calcularProximaEjecucion(frecuencia, hora_programada, dias_espec
     const [horas, minutos] = horaSegura.split(':');
 
     if (frecuencia === 'Fecha Unica' && fecha_unica) {
-        return `${fecha_unica}T${horas}:${minutos}:00-03:00`;
+        return `${fecha_unica} ${horas}:${minutos}:00`;
     }
 
     proxima.setUTCHours(parseInt(horas), parseInt(minutos), 0, 0);
@@ -47,5 +47,5 @@ export function calcularProximaEjecucion(frecuencia, hora_programada, dias_espec
     const mes = String(proxima.getUTCMonth() + 1).padStart(2, '0');
     const dia = String(proxima.getUTCDate()).padStart(2, '0');
 
-    return `${anio}-${mes}-${dia}T${horas}:${minutos}:00-03:00`;
+    return `${anio}-${mes}-${dia} ${horas}:${minutos}:00`;
 }

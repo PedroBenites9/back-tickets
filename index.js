@@ -4,6 +4,11 @@ import dotenv from 'dotenv';
 import http from 'http';
 import { Server } from 'socket.io';
 import { actualizarBaseDeDatos } from './db.js';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 // Importar Rutas
 import authRoutes from './routes/auth.js';
@@ -28,6 +33,9 @@ const io = new Server(server, {
 app.use(cors());
 app.use(express.json());
 
+// Servir archivos estáticos del frontend
+app.use(express.static(path.join(__dirname, 'public')));
+
 // Inicializar Base de Datos
 actualizarBaseDeDatos();
 
@@ -38,6 +46,11 @@ app.use('/api/tareas', tareaRoutes(io));
 app.use('/api/usuarios', usuarioRoutes);
 app.use('/api/clientes', clienteRoutes);
 app.use('/api', systemRoutes);
+
+// Manejar rutas del frontend (SPA)
+app.get('*', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
 
 // Servidor
 server.listen(PORT, () => {
