@@ -58,6 +58,7 @@ export default function ticketRoutes(io) {
             const ticketNuevo = ticketsNuevos[0];
 
             io.emit('ticketCreado', ticketNuevo);
+
             res.json(ticketNuevo);
         } catch (error) {
             console.error("Error al crear ticket:", error);

@@ -205,6 +205,47 @@ export default function tareaRoutes(io) {
             res.status(500).json({ error: "Error al obtener el historial" });
         }
     });
+    // ==========================================
+    // 📊 RUTA DE INDICADORES (Globo Rojo)
+    // ==========================================
+    router.get('/indicadores/:nombreUsuario', async (req, res) => {
+        const { nombreUsuario } = req.params;
+        try {
+            // A. Tareas Nuevas (Le saqué la condición 'status' para evitar el Error 500 de antes)
+            const [nuevas] = await pool.query(`
+                SELECT id FROM tareas_diarias 
+                WHERE id NOT IN (SELECT tarea_id FROM vistas_tareas WHERE nombre_usuario = ?)
+            `, [nombreUsuario]);
+
+            const [atrasadas] = await pool.query(`SELECT COUNT(*) as total FROM tareas_diarias WHERE proxima_ejecucion < NOW()`);
+            const [proximas] = await pool.query(`SELECT COUNT(*) as total FROM tareas_diarias WHERE proxima_ejecucion >= NOW()`);
+
+            res.json({
+                cantidadNuevas: nuevas.length,
+                idsNuevas: nuevas.map(t => t.id),
+                atrasadas: atrasadas[0].total,
+                proximas: proximas[0].total
+            });
+        } catch (error) {
+            console.error("Error obteniendo indicadores:", error);
+            res.status(500).json({ error: "Error calculando indicadores" });
+        }
+    });
+
+
+    router.post('/:id/marcar-vista', async (req, res) => {
+        const tareaId = req.params.id;
+        const { nombreUsuario } = req.body;
+        try {
+            await pool.query(`
+                INSERT IGNORE INTO vistas_tareas (nombre_usuario, tarea_id) VALUES (?, ?)
+            `, [nombreUsuario, tareaId]);
+            res.json({ message: "Registro guardado" });
+        } catch (error) {
+            console.error("Error marcando vista:", error);
+            res.status(500).json({ error: "Error al registrar vista" });
+        }
+    });
 
     return router;
 }

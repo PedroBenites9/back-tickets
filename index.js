@@ -52,6 +52,41 @@ app.get('*', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
+// Areas
+(async () => {
+    try {
+        // 1. Crear tabla si no existe
+        await pool.query(`
+      CREATE TABLE IF NOT EXISTS areas (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        codigo VARCHAR(50) NOT NULL UNIQUE,
+        nombre VARCHAR(100) NOT NULL,
+        activa TINYINT(1) DEFAULT 1
+      )
+    `);
+
+        // 2. Cargar áreas iniciales
+        const iniciales = [
+            ['Tesoreria', 'Tesorería'],
+            ['Sindico', 'Síndico'],
+            ['Operaciones', 'Operaciones'],
+            ['Comercial', 'Comercial'],
+            ['Logistica', 'Logística'],
+            ['RRHH', 'RRHH'],
+            ['Incorporaciones', 'Incorporaciones'],
+            ['Habilitaciones', 'Habilitaciones'],
+            ['Tecnologia', 'Tecnología (IT)'],
+            ['Presidencia', 'Presidencia'],
+            ['CoordinadorGral', 'Coordinador Gral.']
+        ];
+
+        await pool.query('INSERT IGNORE INTO areas (codigo, nombre) VALUES ?', [iniciales]);
+        console.log("🚀 Base de Datos: Tabla de áreas lista y cargada.");
+    } catch (err) {
+        console.error("❌ Error de inicialización DB:", err);
+    }
+})();
+
 // Servidor
 server.listen(PORT, () => {
     console.log(`🚀 Servidor y WebSockets corriendo en el puerto ${PORT}`);
