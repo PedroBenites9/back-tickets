@@ -107,7 +107,24 @@ export default function ticketRoutes(io) {
     router.put('/editar/:id', async (req, res) => {
         try {
             const { id } = req.params;
-            const { asunto, categoria, prioridad, descripcion, tipo_origen, cliente } = req.body;
+            const { asunto, categoria, prioridad, descripcion, tipo_origen, cliente, usuario_actual } = req.body;
+
+            const [ticketOriginal] = await pool.query('SELECT solicitante, descripcion FROM tickets WHERE id = ?', [id]);
+
+            if (ticketOriginal.length === 0) {
+                return res.status(404).json({ error: "Ticket no encontrado" });
+            }
+
+            const creador = ticketOriginal[0].solicitante;
+            const descripcionOriginal = ticketOriginal[0].descripcion;
+
+            let descripcionFinal = descripcionOriginal;
+
+            if (descripcion !== descripcionOriginal) {
+                if (usuario_actual === creador) {
+                    descripcionFinal = descripcion;
+                }
+            }
 
             if (tipo_origen === 'Externo' && cliente) {
                 const [clienteGuardado] = await pool.query('INSERT IGNORE INTO clientes (nombre) VALUES (?)', [cliente]);
@@ -122,7 +139,7 @@ export default function ticketRoutes(io) {
               SET asunto = ?, categoria = ?, prioridad = ?, descripcion = ?, tipo_origen = ?, cliente = ? 
               WHERE id = ? AND status = 1
             `;
-            await pool.query(query, [asunto, categoria, prioridad, descripcion, tipo_origen, cliente || null, id]);
+            await pool.query(query, [asunto, categoria, prioridad, descripcionFinal, tipo_origen, cliente || null, id]);
 
             const [ticketsModificados] = await pool.query('SELECT * FROM tickets WHERE id = ? AND status = 1', [id]);
             const ticketNuevo = ticketsModificados[0];

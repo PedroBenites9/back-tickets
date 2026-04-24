@@ -1,5 +1,6 @@
 export function calcularProximaEjecucion(frecuencia, hora_programada, dias_especificos, fecha_unica, esNuevaCreacion = false) {
     const ahoraUTC = new Date();
+    // Ajuste a la zona horaria local (-3 horas para Argentina)
     const ahora = new Date(ahoraUTC.getTime() - (3 * 60 * 60 * 1000));
     let proxima = new Date(ahora);
 
@@ -12,7 +13,16 @@ export function calcularProximaEjecucion(frecuencia, hora_programada, dias_espec
 
     proxima.setUTCHours(parseInt(horas), parseInt(minutos), 0, 0);
 
-    const diasArray = Array.isArray(dias_especificos) ? dias_especificos.map(Number) : [];
+
+    let diasProcesados = dias_especificos;
+    if (typeof dias_especificos === 'string') {
+        try {
+            diasProcesados = JSON.parse(dias_especificos);
+        } catch (e) {
+            diasProcesados = [];
+        }
+    }
+    const diasArray = Array.isArray(diasProcesados) ? diasProcesados.map(Number) : [];
 
     if (frecuencia === 'Dias Especificos' && diasArray.length > 0) {
         const hoy = ahora.getUTCDay();
@@ -37,9 +47,16 @@ export function calcularProximaEjecucion(frecuencia, hora_programada, dias_espec
         if (esNuevaCreacion) {
             if (proxima <= ahora) proxima.setUTCDate(proxima.getUTCDate() + 1);
         } else {
-            if (frecuencia === 'Diaria') proxima.setUTCDate(proxima.getUTCDate() + 1);
-            if (frecuencia === 'Semanal') proxima.setUTCDate(proxima.getUTCDate() + 7);
-            if (frecuencia === 'Mensual') proxima.setUTCMonth(proxima.getUTCMonth() + 1);
+            if (frecuencia === 'Diaria') {
+                proxima.setUTCDate(proxima.getUTCDate() + 1);
+            } else if (frecuencia === 'Semanal') {
+                proxima.setUTCDate(proxima.getUTCDate() + 7);
+            } else if (frecuencia === 'Mensual') {
+                proxima.setUTCMonth(proxima.getUTCMonth() + 1);
+            } else {
+                console.warn(`⚠️ Frecuencia desconocida: "${frecuencia}". Se sumó 1 día por defecto.`);
+                proxima.setUTCDate(proxima.getUTCDate() + 1);
+            }
         }
     }
 

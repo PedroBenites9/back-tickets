@@ -205,20 +205,30 @@ export default function tareaRoutes(io) {
             res.status(500).json({ error: "Error al obtener el historial" });
         }
     });
+
     // ==========================================
     // 📊 RUTA DE INDICADORES (Globo Rojo)
     // ==========================================
     router.get('/indicadores/:nombreUsuario', async (req, res) => {
         const { nombreUsuario } = req.params;
         try {
-            // A. Tareas Nuevas (Le saqué la condición 'status' para evitar el Error 500 de antes)
+            // A. Tareas Nuevas (Ahora SÍ filtramos por status = 1)
             const [nuevas] = await pool.query(`
-                SELECT id FROM tareas_diarias 
-                WHERE id NOT IN (SELECT tarea_id FROM vistas_tareas WHERE nombre_usuario = ?)
-            `, [nombreUsuario]);
+        SELECT id FROM tareas_diarias 
+        WHERE status = 1 AND id NOT IN (SELECT tarea_id FROM vistas_tareas WHERE nombre_usuario = ?)
+    `, [nombreUsuario]);
 
-            const [atrasadas] = await pool.query(`SELECT COUNT(*) as total FROM tareas_diarias WHERE proxima_ejecucion < NOW()`);
-            const [proximas] = await pool.query(`SELECT COUNT(*) as total FROM tareas_diarias WHERE proxima_ejecucion >= NOW()`);
+            // B. Tareas Atrasadas (Ignorando las borradas)
+            const [atrasadas] = await pool.query(`
+        SELECT COUNT(*) as total FROM tareas_diarias 
+        WHERE proxima_ejecucion < NOW() AND status = 1
+    `);
+
+            // C. Tareas Próximas (Ignorando las borradas)
+            const [proximas] = await pool.query(`
+        SELECT COUNT(*) as total FROM tareas_diarias 
+        WHERE proxima_ejecucion >= NOW() AND status = 1
+    `);
 
             res.json({
                 cantidadNuevas: nuevas.length,
