@@ -206,9 +206,7 @@ export default function tareaRoutes(io) {
         }
     });
 
-    // ==========================================
-    // 📊 RUTA DE INDICADORES (Globo Rojo)
-    // ==========================================
+    //indicar nueva tarea
     router.get('/indicadores/:nombreUsuario', async (req, res) => {
         const { nombreUsuario } = req.params;
         try {
@@ -242,7 +240,7 @@ export default function tareaRoutes(io) {
         }
     });
 
-
+    //marcar tarea como vista
     router.post('/:id/marcar-vista', async (req, res) => {
         const tareaId = req.params.id;
         const { nombreUsuario } = req.body;
@@ -257,5 +255,24 @@ export default function tareaRoutes(io) {
         }
     });
 
+    // Ruta para obtener las opciones dinámicas del formulario
+    router.get('/configuracion/opciones', async (req, res) => {
+        try {
+            const [categorias] = await pool.query('SELECT nombre FROM categorias_rutinas');
+            const [frecuencias] = await pool.query('SELECT codigo, nombre_mostrar FROM frecuencias_permitidas WHERE activa = 1');
+            res.json({
+                categorias: categorias.map(c => c.nombre),
+                frecuencias: frecuencias
+            });
+        } catch (error) {
+            console.error("Error al obtener opciones:", error);
+            res.status(500).json({ error: "No se pudieron cargar las opciones" });
+        }
+    });
+    router.put('/configuracion/frecuencias/:codigo/desactivar', async (req, res) => {
+        const { codigo } = req.params;
+        await pool.query("UPDATE frecuencias_permitidas SET activa = 0 WHERE codigo = ?", [codigo]);
+        res.json({ mensaje: "Frecuencia eliminada con éxito" });
+    });
     return router;
 }
