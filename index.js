@@ -3,12 +3,13 @@ import cors from 'cors';
 import dotenv from 'dotenv';
 import http from 'http';
 import { Server } from 'socket.io';
-import { actualizarBaseDeDatos } from './db.js';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+// 1. IMPORTANTE: Cambiamos 'require' por 'import'
+import { actualizarBaseDeDatos } from './db.js';
+import pool from './db.js';
+import ejecutarMigraciones from './migrator.js';
 
 // Importar Rutas
 import authRoutes from './routes/auth.js';
@@ -17,7 +18,10 @@ import tareaRoutes from './routes/tareas.js';
 import usuarioRoutes from './routes/usuarios.js';
 import clienteRoutes from './routes/clientes.js';
 import systemRoutes from './routes/system.js';
-import pool from './db.js';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
 dotenv.config();
 
 const app = express();
@@ -29,7 +33,7 @@ const io = new Server(server, {
     cors: { origin: "*" }
 });
 
-// Middlewares
+// Middlewares (SIEMPRE van antes de las rutas)
 app.use(cors());
 app.use(express.json());
 
@@ -49,6 +53,9 @@ app.get('*', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
+// ==========================================
+// FUNCIÓN PRINCIPAL DE ARRANQUE SEGURO
+// ==========================================
 const iniciarServidor = async () => {
     let intentos = 10;
 
@@ -57,37 +64,18 @@ const iniciarServidor = async () => {
             await pool.query('SELECT 1');
             console.log('✅ Base de datos conectada.');
 
+            // Ejecutamos tu función antigua (si aún la usás)
             actualizarBaseDeDatos();
 
-            await pool.query(`
-              CREATE TABLE IF NOT EXISTS areas (
-                id INT AUTO_INCREMENT PRIMARY KEY,
-                codigo VARCHAR(50) NOT NULL UNIQUE,
-                nombre VARCHAR(100) NOT NULL,
-                activa TINYINT(1) DEFAULT 1
-              )
-            `);
+            // 2. EJECUTAMOS EL NUEVO SCRIPT DE MIGRACIÓN
+            await ejecutarMigraciones();
 
-            const iniciales = [
-                ['Tesoreria', 'Tesorería'],
-                ['Sindico', 'Síndico'],
-                ['Operaciones', 'Operaciones'],
-                ['Comercial', 'Comercial'],
-                ['Logistica', 'Logística'],
-                ['RRHH', 'RRHH'],
-                ['Incorporaciones', 'Incorporaciones'],
-                ['Habilitaciones', 'Habilitaciones'],
-                ['Tecnologia', 'Tecnología (IT)'],
-                ['Presidencia', 'Presidencia'],
-                ['CoordinadorGral', 'Coordinador Gral.']
-            ];
-
-            await pool.query('INSERT IGNORE INTO areas (codigo, nombre) VALUES ?', [iniciales]);
-            console.log("🚀 Base de Datos: Tabla de áreas lista y cargada.");
-
+            // 3. Levantamos el servidor (Solo UNA vez y usando 'server' por los Sockets)
             server.listen(PORT, () => {
                 console.log(`🚀 Servidor y WebSockets corriendo en el puerto ${PORT}`);
             });
+
+            // Si todo salió bien, rompemos el bucle de reintentos
             break;
 
         } catch (error) {
@@ -103,4 +91,5 @@ const iniciarServidor = async () => {
         }
     }
 };
+
 iniciarServidor();

@@ -5,20 +5,30 @@ import { enviarCorreoResolucion } from '../utils/mail.js';
 export default function ticketRoutes(io) {
     const router = express.Router();
 
-    // Obtener todos los tickets
+    // Ruta para obtener tickets dependiendo del ROL y ÁREA
     router.get('/', async (req, res) => {
         try {
-            // MariaDB usa INTERVAL X DAY en lugar de INTERVAL 'X days'
-            await pool.query(`
-              UPDATE tickets 
-              SET estado = 'Cerrado Definitivo' 
-              WHERE estado = 'Resuelto' 
-              AND fecha_finalizado <= NOW() - INTERVAL 5 DAY
-              AND status = 1
-            `);
+            const rolUsuario = req.query.rol;
+            const areaUsuario = req.query.area; // Ej: "Tesoreria"
 
-            const [tickets] = await pool.query('SELECT * FROM tickets WHERE status = 1 ORDER BY id DESC');
+            let query = '';
+            let parametros = [];
+
+            // 👑 1. ADMIN O TÉCNICO IT (Tienen pase VIP, ven toda la empresa)
+            if (rolUsuario === 'admin' || rolUsuario === 'tecnico') {
+                query = 'SELECT * FROM tickets WHERE status = 1 ORDER BY fecha_creacion DESC';
+            }
+
+            // 🏢 2. CUALQUIER OTRA PERSONA (Filtro estricto por su Área)
+            // No importa si es Coordinador o Auxiliar, si es de Tesorería, ve lo de Tesorería.
+            else {
+                query = 'SELECT * FROM tickets WHERE area_origen = ? AND status = 1 ORDER BY fecha_creacion DESC';
+                parametros = [areaUsuario];
+            }
+
+            const [tickets] = await pool.query(query, parametros);
             res.json(tickets);
+
         } catch (error) {
             console.error("Error al obtener tickets:", error);
             res.status(500).json({ error: "Error al obtener los tickets" });
@@ -28,23 +38,33 @@ export default function ticketRoutes(io) {
     // Crear un nuevo ticket
     router.post('/', async (req, res) => {
         try {
-            const { asunto, categoria, prioridad, descripcion, tipo_origen, solicitante, cliente } = req.body;
+            const { asunto, categoria, prioridad, descripcion, tipo_origen, solicitante, cliente, area_origen } = req.body;
 
             // Manejo de Clientes: INSERT IGNORE evita errores si el nombre ya existe
             if (tipo_origen === 'Externo' && cliente) {
                 const [clienteGuardado] = await pool.query('INSERT IGNORE INTO clientes (nombre) VALUES (?)', [cliente]);
-                if (clienteGuardado.insertId) { // Si insertId > 0, es un cliente nuevo
+                if (clienteGuardado.insertId) {
                     const [nuevoCliente] = await pool.query('SELECT * FROM clientes WHERE id = ? AND status = 1', [clienteGuardado.insertId]);
                     io.emit('clienteCreado', nuevoCliente[0]);
                 }
             }
 
-            // 1. Insertamos el ticket sin código todavía
+            // 1. Insertamos el ticket sin código todavía   
             const queryInsert = `
-              INSERT INTO tickets (asunto, categoria, prioridad, descripcion, tipo_origen, solicitante, cliente) 
-              VALUES (?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO tickets 
+                (asunto, categoria, prioridad, descripcion, tipo_origen, solicitante, cliente, area_origen, estado)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'Abierto')
             `;
-            const [resultadoInsert] = await pool.query(queryInsert, [asunto, categoria, prioridad, descripcion, tipo_origen, solicitante, cliente || null]);
+            const [resultadoInsert] = await pool.query(queryInsert, [
+                asunto,
+                categoria,
+                prioridad,
+                descripcion,
+                tipo_origen,
+                solicitante,
+                cliente || null,
+                area_origen || null
+            ]);
 
             // 2. Usamos el ID autoincremental para armar el TK-XXXX
             const nextId = resultadoInsert.insertId;
@@ -173,14 +193,24 @@ export default function ticketRoutes(io) {
 
     // Eliminar ticket
     router.delete('/:id', async (req, res) => {
+        const { id } = req.params;
+        const { rol, nombre_usuario } = req.query; // Necesitamos que el front mande estos datos
+
         try {
-            const { id } = req.params;
-            await pool.query('UPDATE comentarios SET status = 0 WHERE ticket_id = ?', [id]);
-            await pool.query('UPDATE tickets SET status = 0 WHERE id = ?', [id]);
-            res.json({ mensaje: 'Ticket eliminado correctamente' });
+            // 1. Buscamos el ticket para saber quién lo creó
+            const [ticket] = await pool.query("SELECT solicitante FROM tickets WHERE id = ?", [id]);
+
+            if (ticket.length === 0) return res.status(404).json({ error: "Ticket no encontrado" });
+
+            // 2. Verificamos: ¿Es admin? ¿O es el dueño?
+            if (rol === 'admin' || ticket[0].solicitante === nombre_usuario) {
+                await pool.query("UPDATE tickets SET status = 0 WHERE id = ?", [id]); // Borrado lógico
+                res.json({ message: "Ticket eliminado correctamente" });
+            } else {
+                res.status(403).json({ error: "No tienes permiso para eliminar este ticket" });
+            }
         } catch (error) {
-            console.error("Error al eliminar:", error);
-            res.status(500).json({ error: "Error interno del servidor" });
+            res.status(500).json({ error: error.message });
         }
     });
 

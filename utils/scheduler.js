@@ -47,16 +47,18 @@ export function calcularProximaEjecucion(frecuencia, hora_programada, dias_espec
         if (esNuevaCreacion) {
             if (proxima <= ahora) proxima.setUTCDate(proxima.getUTCDate() + 1);
         } else {
-            if (frecuencia === 'Diaria') {
-                proxima.setUTCDate(proxima.getUTCDate() + 1);
-            } else if (frecuencia === 'Semanal') {
-                proxima.setUTCDate(proxima.getUTCDate() + 7);
-            } else if (frecuencia === 'Mensual') {
-                proxima.setUTCMonth(proxima.getUTCMonth() + 1);
-            } else {
+            if (frecuencia === 'Diaria') proxima.setUTCDate(proxima.getUTCDate() + 1);
+            else if (frecuencia === 'Semanal') proxima.setUTCDate(proxima.getUTCDate() + 7);
+            else if (frecuencia === 'Mensual') proxima.setUTCMonth(proxima.getUTCMonth() + 1);
+            else if (frecuencia === 'Bimestral') proxima.setUTCMonth(proxima.getUTCMonth() + 2);
+            else if (frecuencia === 'Trimestral') proxima.setUTCMonth(proxima.getUTCMonth() + 3);
+            else if (frecuencia === 'Semestral') proxima.setUTCMonth(proxima.getUTCMonth() + 6);
+            else if (frecuencia === 'Anual') proxima.setUTCFullYear(proxima.getUTCFullYear() + 1);
+            else {
                 console.warn(`⚠️ Frecuencia desconocida: "${frecuencia}". Se sumó 1 día por defecto.`);
                 proxima.setUTCDate(proxima.getUTCDate() + 1);
             }
+
         }
     }
 
