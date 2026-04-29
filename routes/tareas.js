@@ -1,6 +1,29 @@
 import express from 'express';
 import pool from '../db.js';
 import { calcularProximaEjecucion } from '../utils/scheduler.js';
+import multer from 'multer';
+import path from 'path';
+import fs from 'fs';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+// Configuración de Multer para evidencias de tareas
+const storage = multer.diskStorage({
+    destination: (req, file, cb) => {
+        const dir = path.join(__dirname, '..', 'upload', 'tareas');
+        if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+        cb(null, dir);
+    },
+    filename: (req, file, cb) => {
+        const ext = path.extname(file.originalname);
+        const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+        cb(null, `tarea-${req.params.id}-${uniqueSuffix}${ext}`);
+    }
+});
+
+const upload = multer({ storage });
 
 export default function tareaRoutes(io) {
     const router = express.Router();
@@ -94,11 +117,12 @@ export default function tareaRoutes(io) {
         }
     });
 
-    // Completar tarea
-    router.put('/:id/completar', async (req, res) => {
+    // Completar tarea (con comentario y archivo)
+    router.put('/:id/completar', upload.single('archivo'), async (req, res) => {
         try {
             const { id } = req.params;
-            const { usuario } = req.body;
+            const { usuario, comentario } = req.body;
+            const archivo_adjunto = req.file ? req.file.path : null;
 
             const [tareaRow] = await pool.query(
                 'SELECT titulo, hora_programada, fecha_inicio_real, tiempo_acumulado_minutos, hora_primer_inicio, frecuencia, dias_especificos, fecha_unica FROM tareas_diarias WHERE id = ? AND status = 1',
@@ -119,8 +143,8 @@ export default function tareaRoutes(io) {
             }
 
             await pool.query(
-                'INSERT INTO historial_tareas (tarea_id, titulo_tarea, usuario_que_completo, tiempo_total_minutos, fecha_inicio) VALUES (?, ?, ?, ?, ?)',
-                [id, titulo, usuario || 'Sistema', tiempoFinal, hora_primer_inicio]
+                'INSERT INTO historial_tareas (tarea_id, titulo_tarea, usuario_que_completo, tiempo_total_minutos, fecha_inicio, comentario, archivo_adjunto) VALUES (?, ?, ?, ?, ?, ?, ?)',
+                [id, titulo, usuario || 'Sistema', tiempoFinal, hora_primer_inicio, comentario || null, archivo_adjunto]
             );
 
             if (frecuencia === 'Fecha Unica') {

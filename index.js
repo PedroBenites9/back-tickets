@@ -25,7 +25,7 @@ const __dirname = path.dirname(__filename);
 dotenv.config();
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 3010;
 
 // Configurar Servidor HTTP y Socket.io
 const server = http.createServer(app);
@@ -39,6 +39,7 @@ app.use(express.json());
 
 // Servir archivos estáticos del frontend
 app.use(express.static(path.join(__dirname, 'public')));
+app.use('/api/tareas/archivo', express.static(path.join(__dirname, 'upload/tareas')));
 
 // Montar Rutas
 app.use('/api', authRoutes);
