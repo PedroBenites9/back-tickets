@@ -31,7 +31,17 @@ export default function tareaRoutes(io) {
     // Obtener todas las tareas
     router.get('/', async (req, res) => {
         try {
-            const [tareas] = await pool.query('SELECT * FROM tareas_diarias WHERE status = 1 ORDER BY proxima_ejecucion ASC');
+            const [tareas] = await pool.query(`
+            SELECT 
+        *,
+        CASE 
+            WHEN estado = 'En Curso' THEN 'En proceso'
+            WHEN estado = 'Pausada' THEN 'En pausa'
+            WHEN (estado IS NULL OR estado = 'Pendiente') AND DATE_ADD(proxima_ejecucion, INTERVAL 10 MINUTE) < NOW() THEN 'Atrasada'
+            ELSE 'Esperando fecha'
+        END AS estado_visual
+            FROM tareas_diarias
+            ORDER BY proxima_ejecucion ASC`);
             res.json(tareas);
         } catch (error) {
             console.error("Error en GET /api/tareas:", error);

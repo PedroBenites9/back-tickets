@@ -70,7 +70,7 @@ const ejecutarMigraciones = async () => {
 
         const categoriasMaestras = [
             '🧹 Limpieza / General',
-            '📹 CCTV y Serdonde está dores',
+            '📹 CCTV y Servidores',
             '🌐 Redes',
             '📊 Reportes',
         ];
@@ -124,15 +124,15 @@ const ejecutarMigraciones = async () => {
         // 5. Registros completos en 'frecuencias_permitidas'
         // ─────────────────────────────────────────────────────────────────────
         const frecuenciasCompletas = [
-            ['Diaria',          'Todos los días',        0],
-            ['Semanal',         'Una vez por semana',    0],
-            ['Mensual',         'Una vez al mes',        0],
-            ['Bimestral',       'Cada 2 meses',          0],
-            ['Trimestral',      'Cada 3 meses',          0],
-            ['Semestral',       'Cada 6 meses',          0],
-            ['Anual',           'Una vez al año',        0],
-            ['Dias Especificos','📅 Días Específicos',   1],
-            ['Fecha Unica',     '🎯 Fecha Única',        1],
+            ['Diaria', 'Todos los días', 0],
+            ['Semanal', 'Una vez por semana', 0],
+            ['Mensual', 'Una vez al mes', 0],
+            ['Bimestral', 'Cada 2 meses', 0],
+            ['Trimestral', 'Cada 3 meses', 0],
+            ['Semestral', 'Cada 6 meses', 0],
+            ['Anual', 'Una vez al año', 0],
+            ['Dias Especificos', '📅 Días Específicos', 1],
+            ['Fecha Unica', '🎯 Fecha Única', 1],
         ];
 
         console.log("♻️  Sincronizando frecuencias completas...");
@@ -156,10 +156,10 @@ const ejecutarMigraciones = async () => {
         `);
 
         const estadosMaestros = [
-            ['Abierto',            'Abierto',            'danger'],
-            ['En Proceso',         'En Proceso',         'warning'],
+            ['Abierto', 'Abierto', 'danger'],
+            ['En Proceso', 'En Proceso', 'warning'],
             ['Cerrado Definitivo', 'Cerrado Definitivo', 'dark'],
-            ['Resuelto',           'Resuelto',           'success'],
+            ['Resuelto', 'Resuelto', 'success'],
         ];
 
         console.log("♻️  Sincronizando estados de ticket...");
@@ -182,9 +182,9 @@ const ejecutarMigraciones = async () => {
         `);
 
         const rolesMaestros = [
-            ['admin',   'Administrador'],
+            ['admin', 'Administrador'],
             ['tecnico', 'Técnico'],
-            ['final',   'Usuario Final'],
+            ['final', 'Usuario Final'],
         ];
 
         console.log("♻️  Sincronizando roles...");
@@ -254,7 +254,7 @@ const ejecutarMigraciones = async () => {
                 await pool.query(`ALTER TABLE clientes DROP INDEX \`${idxName}\``);
             }
         }
-        
+
         // ─────────────────────────────────────────────────────────────────────
         // 12. Columna 'comentario' en 'historial_tareas'
         // ─────────────────────────────────────────────────────────────────────
