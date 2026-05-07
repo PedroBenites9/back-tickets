@@ -14,13 +14,12 @@ export default function ticketRoutes(io) {
             let query = '';
             let parametros = [];
 
-            // 👑 1. ADMIN O TÉCNICO IT (Tienen pase VIP, ven toda la empresa)
-            if (rolUsuario === 'admin' || rolUsuario === 'tecnico') {
+            // 👑 1. ADMIN, TÉCNICO O COORDINADOR (Pase VIP para ver estadísticas globales)
+            if (rolUsuario === 'admin' || rolUsuario === 'tecnico' || rolUsuario === 'coordinador') {
                 query = 'SELECT * FROM tickets WHERE status = 1 ORDER BY fecha_creacion DESC';
             }
 
             // 🏢 2. CUALQUIER OTRA PERSONA (Filtro estricto por su Área)
-            // No importa si es Coordinador o Auxiliar, si es de Tesorería, ve lo de Tesorería.
             else {
                 query = 'SELECT * FROM tickets WHERE area_origen = ? AND status = 1 ORDER BY fecha_creacion DESC';
                 parametros = [areaUsuario];

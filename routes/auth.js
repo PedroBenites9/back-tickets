@@ -9,7 +9,7 @@ const router = express.Router();
 // Registro
 router.post('/registro', async (req, res) => {
     try {
-        const { nombre, email, password, id_area } = req.body;
+        const { nombre, email, password, area } = req.body;
 
         // 1. Extraemos directamente las filas usando [usuarioExistente] y el símbolo ?
         const [usuarioExistente] = await pool.query('SELECT * FROM usuarios WHERE email = ? AND status = 1', [email]);
@@ -20,12 +20,12 @@ router.post('/registro', async (req, res) => {
 
         // 2. Insertamos datos
         const query = `INSERT INTO usuarios (nombre, email, password, id_area) VALUES (?, ?, ?, ?)`;
-        const [resultado] = await pool.query(query, [nombre, email, passwordEncriptada, id_area || 'Sin Asignar']);
+        const [resultado] = await pool.query(query, [nombre, email, passwordEncriptada, area || null]);
 
         // 3. MariaDB nos devuelve el insertId
         res.status(201).json({
             mensaje: "Usuario creado exitosamente",
-            usuario: { id: resultado.insertId, nombre, email, id_area: id_area || null }
+            usuario: { id: resultado.insertId, nombre, email, id_area: area || null }
         });
     } catch (error) {
         console.error(error);
