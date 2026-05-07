@@ -9,7 +9,7 @@ const router = express.Router();
 // Registro
 router.post('/registro', async (req, res) => {
     try {
-        const { nombre, email, password, area } = req.body;
+        const { nombre, email, password, id_area } = req.body;
 
         // 1. Extraemos directamente las filas usando [usuarioExistente] y el símbolo ?
         const [usuarioExistente] = await pool.query('SELECT * FROM usuarios WHERE email = ? AND status = 1', [email]);
@@ -19,13 +19,13 @@ router.post('/registro', async (req, res) => {
         const passwordEncriptada = await bcrypt.hash(password, saltos);
 
         // 2. Insertamos datos
-        const query = `INSERT INTO usuarios (nombre, email, password, area) VALUES (?, ?, ?, ?)`;
-        const [resultado] = await pool.query(query, [nombre, email, passwordEncriptada, area || 'Sin Asignar']);
+        const query = `INSERT INTO usuarios (nombre, email, password, id_area) VALUES (?, ?, ?, ?)`;
+        const [resultado] = await pool.query(query, [nombre, email, passwordEncriptada, id_area || 'Sin Asignar']);
 
         // 3. MariaDB nos devuelve el insertId
         res.status(201).json({
             mensaje: "Usuario creado exitosamente",
-            usuario: { id: resultado.insertId, nombre, email, area: area || 'Sin Asignar' }
+            usuario: { id: resultado.insertId, nombre, email, id_area: id_area || null }
         });
     } catch (error) {
         console.error(error);
@@ -37,15 +37,43 @@ router.post('/registro', async (req, res) => {
 router.post('/login', async (req, res) => {
     try {
         const { email, password } = req.body;
-        const [usuarios] = await pool.query('SELECT id, nombre, email, password, rol, area FROM usuarios WHERE email = ? AND status = 1', [email]);
+
+        // 1. Hacemos el JOIN para traer la contraseña, pero también traducir los IDs a palabras
+        const query = `
+            SELECT 
+                u.id, 
+                u.nombre, 
+                u.email, 
+                u.password, 
+                r.codigo AS rol,   -- 'admin', 'tecnico', 'coordinador'
+                a.nombre AS area   -- 'Tecnología (IT)', 'Tesorería'
+            FROM usuarios u
+            LEFT JOIN roles r ON u.id_rol = r.id
+            LEFT JOIN areas a ON u.id_area = a.id
+            WHERE u.email = ? AND u.status = 1
+        `;
+        const [usuarios] = await pool.query(query, [email]);
 
         if (usuarios.length === 0) return res.status(401).json({ error: "Usuario no encontrado" });
 
         const usuario = usuarios[0];
+
         if (!await bcrypt.compare(password, usuario.password)) return res.status(401).json({ error: "Contraseña incorrecta" });
 
+        // 2. Como ahora sí existe usuario.rol, el token se va a armar perfecto
         const token = jwt.sign({ id: usuario.id, rol: usuario.rol }, process.env.JWT_SECRET, { expiresIn: '2h' });
-        res.json({ mensaje: "Login exitoso", token, usuario: { id: usuario.id, nombre: usuario.nombre, rol: usuario.rol, area: usuario.area } });
+
+        // 3. Le mandamos a React "rol" y "area" como textos, así no tenés que tocar nada en tu Frontend
+        res.json({
+            mensaje: "Login exitoso",
+            token,
+            usuario: {
+                id: usuario.id,
+                nombre: usuario.nombre,
+                rol: usuario.rol,
+                area: usuario.area
+            }
+        });
     } catch (error) {
         console.error(error);
         res.status(500).json({ error: "Error en el servidor al iniciar sesión" });

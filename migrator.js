@@ -70,7 +70,7 @@ const ejecutarMigraciones = async () => {
 
         const categoriasMaestras = [
             '🧹 Limpieza / General',
-            '📹 CCTV y Serdonde está dores',
+            '📹 CCTV y Servidores',
             '🌐 Redes',
             '📊 Reportes',
         ];
@@ -185,6 +185,8 @@ const ejecutarMigraciones = async () => {
             ['admin', 'Administrador'],
             ['tecnico', 'Técnico'],
             ['final', 'Usuario Final'],
+            ['auxiliar', 'Auxiliar'],
+            ['coordinador', 'Coordinador'],
         ];
 
         console.log("♻️  Sincronizando roles...");
@@ -292,6 +294,49 @@ const ejecutarMigraciones = async () => {
             await pool.query(
                 "ALTER TABLE tareas_diarias ADD COLUMN descripcion TEXT AFTER titulo"
             );
+        }
+        // ─────────────────────────────────────────────────────────────────────
+        // 15. Normalización de la tabla 'usuarios' (Migración a IDs numéricos)
+        // ─────────────────────────────────────────────────────────────────────
+        const [colIdRol] = await pool.query(
+            "SHOW COLUMNS FROM usuarios LIKE 'id_rol'"
+        );
+
+        // Si no existe la columna id_rol, significa que Gustavo todavía tiene la estructura vieja
+        if (colIdRol.length === 0) {
+            console.log("⚠️  Iniciando normalización de usuarios: Agregando id_rol e id_area...");
+
+            // 1. Creamos las columnas numéricas nuevas
+            await pool.query("ALTER TABLE usuarios ADD COLUMN id_rol INT AFTER password");
+            await pool.query("ALTER TABLE usuarios ADD COLUMN id_area INT AFTER id_rol");
+
+            console.log("♻️  Migrando datos de texto a IDs sin perder información...");
+
+            // 2. Hacemos el "match" y traducimos la palabra al ID
+            await pool.query(`
+                UPDATE usuarios u
+                JOIN roles r ON u.rol = r.codigo
+                SET u.id_rol = r.id
+            `);
+            await pool.query(`
+                UPDATE usuarios u
+                JOIN areas a ON u.area = a.codigo
+                SET u.id_area = a.id
+            `);
+
+            console.log("🗑️  Eliminando columnas de texto antiguas...");
+
+            // 3. Borramos las columnas viejas
+            await pool.query("ALTER TABLE usuarios DROP COLUMN rol");
+            await pool.query("ALTER TABLE usuarios DROP COLUMN area");
+
+            console.log("🔗 Agregando llaves foráneas de seguridad...");
+
+            // 4. Bloqueamos las columnas para que solo acepten IDs válidos
+            await pool.query("ALTER TABLE usuarios ADD CONSTRAINT fk_usuarios_rol FOREIGN KEY (id_rol) REFERENCES roles(id)");
+            await pool.query("ALTER TABLE usuarios ADD CONSTRAINT fk_usuarios_area FOREIGN KEY (id_area) REFERENCES areas(id)");
+
+            console.log("✅ Normalización de usuarios completada con éxito.");
         }
 
         console.log("✅ Base de datos actualizada y lista.");
