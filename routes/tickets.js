@@ -8,36 +8,42 @@ export default function ticketRoutes(io) {
     // Ruta para obtener tickets dependiendo del ROL y ÁREA
     router.get('/', async (req, res) => {
         try {
-            const rolUsuario = req.query.rol;
-            const areaUsuario = req.query.area; // Ej: "Tesoreria"
+            const idRol = parseInt(req.query.id_rol) || 0;
+            const idArea = parseInt(req.query.id_area) || 0;
 
             let query = '';
             let parametros = [];
 
-            // 👑 1. ADMIN, TÉCNICO O COORDINADOR (Pase VIP para ver estadísticas globales)
-            if (rolUsuario === 'admin' || rolUsuario === 'tecnico' || rolUsuario === 'coordinador') {
-                query = 'SELECT * FROM tickets WHERE status = 1 ORDER BY fecha_creacion DESC';
-            }
+            // t.* -> Trae todas las columnas del ticket
+            // a.nombre -> Trae el nombre de la tabla áreas y lo renombra como nombre_area_origen
+            const selectBase = `
+                SELECT t.*, a.nombre AS nombre_area_origen 
+                FROM tickets t
+                LEFT JOIN areas a ON t.id_area = a.id
+            `;
 
-            // 🏢 2. CUALQUIER OTRA PERSONA (Filtro estricto por su Área)
-            else {
-                query = 'SELECT * FROM tickets WHERE area_origen = ? AND status = 1 ORDER BY fecha_creacion DESC';
-                parametros = [areaUsuario];
+            if (idRol === 1 || idRol === 2 || idRol === 23) {
+                // Admins y Técnicos ven todo
+                query = `${selectBase} WHERE t.status = 1 ORDER BY t.fecha_creacion DESC`;
+            } else {
+                // Usuarios finales ven solo su área
+                query = `${selectBase} WHERE t.id_area = ? AND t.status = 1 ORDER BY t.fecha_creacion DESC`;
+                parametros = [idArea];
             }
 
             const [tickets] = await pool.query(query, parametros);
             res.json(tickets);
-
         } catch (error) {
-            console.error("Error al obtener tickets:", error);
-            res.status(500).json({ error: "Error al obtener los tickets" });
+            console.error("Error al obtener tickets con JOIN:", error);
+            res.status(500).json({ error: "Error interno del servidor" });
         }
     });
-
     // Crear un nuevo ticket
     router.post('/', async (req, res) => {
         try {
-            const { asunto, categoria, prioridad, descripcion, tipo_origen, solicitante, cliente, area_origen } = req.body;
+            const { asunto, categoria, prioridad, descripcion, tipo_origen, solicitante, cliente, area_origen, id_area } = req.body;
+
+            const areaParaGuardar = id_area || area_origen || null;
 
             // Manejo de Clientes: INSERT IGNORE evita errores si el nombre ya existe
             if (tipo_origen === 'Externo' && cliente) {
@@ -51,18 +57,11 @@ export default function ticketRoutes(io) {
             // 1. Insertamos el ticket sin código todavía   
             const queryInsert = `
                 INSERT INTO tickets 
-                (asunto, categoria, prioridad, descripcion, tipo_origen, solicitante, cliente, area_origen, estado)
+                (asunto, categoria, prioridad, descripcion, tipo_origen, solicitante, cliente, id_area, estado)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'Abierto')
             `;
             const [resultadoInsert] = await pool.query(queryInsert, [
-                asunto,
-                categoria,
-                prioridad,
-                descripcion,
-                tipo_origen,
-                solicitante,
-                cliente || null,
-                area_origen || null
+                asunto, categoria, prioridad, descripcion, tipo_origen, solicitante, cliente || null, areaParaGuardar
             ]);
 
             // 2. Usamos el ID autoincremental para armar el TK-XXXX
@@ -73,9 +72,14 @@ export default function ticketRoutes(io) {
             await pool.query('UPDATE tickets SET codigo = ? WHERE id = ?', [codigo, nextId]);
 
             // 4. Buscamos el ticket completo para devolverlo al Frontend y por Sockets
-            const [ticketsNuevos] = await pool.query('SELECT * FROM tickets WHERE id = ? AND status = 1', [nextId]);
+            const [ticketsNuevos] = await pool.query(`
+            SELECT t.*, a.nombre AS nombre_area_origen 
+            FROM tickets t 
+            LEFT JOIN areas a ON t.id_area = a.id 
+            WHERE t.id = ? AND t.status = 1
+        `, [nextId]);
             const ticketNuevo = ticketsNuevos[0];
-
+            console.log("📢 MANDO ESTE TICKET POR SOCKET:", ticketNuevo);
             io.emit('ticketCreado', ticketNuevo);
 
             res.json(ticketNuevo);

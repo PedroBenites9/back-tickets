@@ -39,19 +39,8 @@ router.post('/login', async (req, res) => {
         const { email, password } = req.body;
 
         // 1. Hacemos el JOIN para traer la contraseña, pero también traducir los IDs a palabras
-        const query = `
-            SELECT 
-                u.id, 
-                u.nombre, 
-                u.email, 
-                u.password, 
-                r.codigo AS rol,   -- 'admin', 'tecnico', 'coordinador'
-                a.nombre AS area   -- 'Tecnología (IT)', 'Tesorería'
-            FROM usuarios u
-            LEFT JOIN roles r ON u.id_rol = r.id
-            LEFT JOIN areas a ON u.id_area = a.id
-            WHERE u.email = ? AND u.status = 1
-        `;
+        // ✅ CORRECCIÓN:
+        const query = `SELECT id, nombre, email, password, id_rol, id_area FROM usuarios WHERE email = ?`;
         const [usuarios] = await pool.query(query, [email]);
 
         if (usuarios.length === 0) return res.status(401).json({ error: "Usuario no encontrado" });
@@ -61,8 +50,8 @@ router.post('/login', async (req, res) => {
         if (!await bcrypt.compare(password, usuario.password)) return res.status(401).json({ error: "Contraseña incorrecta" });
 
         // 2. Como ahora sí existe usuario.rol, el token se va a armar perfecto
-        const token = jwt.sign({ id: usuario.id, rol: usuario.rol }, process.env.JWT_SECRET, { expiresIn: '2h' });
-
+        // ✅ Usamos id_rol para el token
+        const token = jwt.sign({ id: usuario.id, id_rol: usuario.id_rol }, process.env.JWT_SECRET, { expiresIn: '2h' });
         // 3. Le mandamos a React "rol" y "area" como textos, así no tenés que tocar nada en tu Frontend
         res.json({
             mensaje: "Login exitoso",
@@ -70,8 +59,8 @@ router.post('/login', async (req, res) => {
             usuario: {
                 id: usuario.id,
                 nombre: usuario.nombre,
-                rol: usuario.rol,
-                area: usuario.area
+                id_rol: usuario.id_rol,
+                id_area: usuario.id_area
             }
         });
     } catch (error) {

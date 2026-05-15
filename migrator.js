@@ -3,22 +3,6 @@ import pool from './db.js';
 /**
  * Migración automática: lleva la estructura de la base de datos de producción
  * al estado objetivo definido en init.sql.
- *
- * Cambios que aplica:
- *  1.  Crea la tabla 'areas' si no existe e inserta los datos maestros.
- *  2.  Crea la tabla 'categorias_rutinas' si no existe e inserta los datos maestros.
- *  3.  Crea la tabla 'frecuencias_permitidas' si no existe e inserta los datos maestros.
- *  4.  Agrega la columna 'activa' a 'frecuencias_permitidas' si no existe.
- *  5.  Inserta los registros faltantes en 'frecuencias_permitidas' (Diaria, Semanal, etc.).
- *  6.  Crea la tabla 'estados_ticket' si no existe e inserta los datos maestros.
- *  7.  Crea la tabla 'roles' si no existe e inserta los datos maestros.
- *  8.  Crea la tabla 'vistas_tareas' si no existe.
- *  9.  Agrega la columna 'area_origen' a 'tickets' si no existe.
- *  10. Agrega la columna 'fecha' a 'comentarios' si no existe.
- *  11. Elimina los índices UNIQUE duplicados de la tabla 'clientes'.
- *  12. Agrega la columna 'comentario' a 'historial_tareas' si no existe.
- *  13. Agrega la columna 'archivo_adjunto' a 'historial_tareas' si no existe.
- *  14. Agrega la columna 'descripcion' a 'tareas_diarias' si no existe.
  */
 const ejecutarMigraciones = async () => {
     console.log("🚀 Iniciando comprobación de base de datos...");
@@ -187,6 +171,7 @@ const ejecutarMigraciones = async () => {
             ['final', 'Usuario Final'],
             ['auxiliar', 'Auxiliar'],
             ['coordinador', 'Coordinador'],
+            ['coordinador_gral', 'Coordinador Gral'],
         ];
 
         console.log("♻️  Sincronizando roles...");
@@ -238,7 +223,6 @@ const ejecutarMigraciones = async () => {
 
         // ─────────────────────────────────────────────────────────────────────
         // 11. Eliminar índices UNIQUE duplicados en la tabla 'clientes'
-        //     (nombre_2 … nombre_63 son artefactos del dump de producción)
         // ─────────────────────────────────────────────────────────────────────
         console.log("🔍 Verificando índices duplicados en clientes...");
         const duplicados = [];
@@ -246,7 +230,6 @@ const ejecutarMigraciones = async () => {
             duplicados.push(`nombre_${i}`);
         }
 
-        // Recuperamos los índices actuales de la tabla
         const [indexes] = await pool.query("SHOW INDEX FROM clientes");
         const indexNames = new Set(indexes.map(row => row.Key_name));
 
@@ -295,6 +278,7 @@ const ejecutarMigraciones = async () => {
                 "ALTER TABLE tareas_diarias ADD COLUMN descripcion TEXT AFTER titulo"
             );
         }
+
         // ─────────────────────────────────────────────────────────────────────
         // 15. Normalización de la tabla 'usuarios' (Migración a IDs numéricos)
         // ─────────────────────────────────────────────────────────────────────
@@ -302,17 +286,14 @@ const ejecutarMigraciones = async () => {
             "SHOW COLUMNS FROM usuarios LIKE 'id_rol'"
         );
 
-        // Si no existe la columna id_rol, significa que Gustavo todavía tiene la estructura vieja
         if (colIdRol.length === 0) {
             console.log("⚠️  Iniciando normalización de usuarios: Agregando id_rol e id_area...");
 
-            // 1. Creamos las columnas numéricas nuevas
             await pool.query("ALTER TABLE usuarios ADD COLUMN id_rol INT AFTER password");
             await pool.query("ALTER TABLE usuarios ADD COLUMN id_area INT AFTER id_rol");
 
-            console.log("♻️  Migrando datos de texto a IDs sin perder información...");
+            console.log("♻️  Migrando datos de texto a IDs en usuarios sin perder información...");
 
-            // 2. Hacemos el "match" y traducimos la palabra al ID
             await pool.query(`
                 UPDATE usuarios u
                 JOIN roles r ON u.rol = r.codigo
@@ -324,21 +305,107 @@ const ejecutarMigraciones = async () => {
                 SET u.id_area = a.id
             `);
 
-            console.log("🗑️  Eliminando columnas de texto antiguas...");
-
-            // 3. Borramos las columnas viejas
+            console.log("🗑️  Eliminando columnas de texto antiguas de usuarios...");
             await pool.query("ALTER TABLE usuarios DROP COLUMN rol");
             await pool.query("ALTER TABLE usuarios DROP COLUMN area");
 
-            console.log("🔗 Agregando llaves foráneas de seguridad...");
-
-            // 4. Bloqueamos las columnas para que solo acepten IDs válidos
+            console.log("🔗 Agregando llaves foráneas a usuarios...");
             await pool.query("ALTER TABLE usuarios ADD CONSTRAINT fk_usuarios_rol FOREIGN KEY (id_rol) REFERENCES roles(id)");
             await pool.query("ALTER TABLE usuarios ADD CONSTRAINT fk_usuarios_area FOREIGN KEY (id_area) REFERENCES areas(id)");
 
             console.log("✅ Normalización de usuarios completada con éxito.");
         }
 
+        // ─────────────────────────────────────────────────────────────────────
+        // 16. Normalización de la tabla 'tickets' (Migración a IDs numéricos)
+        // ─────────────────────────────────────────────────────────────────────
+        const [colIdAreaTickets] = await pool.query(
+            "SHOW COLUMNS FROM tickets LIKE 'id_area'"
+        );
+
+        if (colIdAreaTickets.length === 0) {
+            console.log("⚠️  Iniciando normalización de tickets: Agregando id_area...");
+
+            // Agregamos la nueva columna de ID
+            await pool.query("ALTER TABLE tickets ADD COLUMN id_area INT AFTER area_origen");
+
+            console.log("♻️  Vinculando tickets con sus IDs de área correspondientes...");
+
+            // Vinculamos cruzando el texto viejo (area_origen) con el nombre o código oficial
+            await pool.query(`
+                UPDATE tickets t
+                JOIN areas a ON t.area_origen = a.codigo OR t.area_origen = a.nombre
+                SET t.id_area = a.id
+            `);
+
+            console.log("🔗 Agregando llave foránea a tickets...");
+            // Aseguramos la integridad referencial
+            await pool.query("ALTER TABLE tickets ADD CONSTRAINT fk_tickets_area FOREIGN KEY (id_area) REFERENCES areas(id)");
+
+            console.log("✅ Normalización de tickets completada con éxito.");
+        }
+        // ─────────────────────────────────────────────────────────────────────
+        // 17. Limpieza Inteligente de Tickets Huérfanos (Los que tienen NULL)
+        // ─────────────────────────────────────────────────────────────────────
+        const [huerfanos] = await pool.query("SELECT COUNT(*) AS total FROM tickets WHERE id_area IS NULL");
+
+        if (huerfanos[0].total > 0) {
+            console.log(`⚠️  Se detectaron ${huerfanos[0].total} tickets sin área asignada (NULL). Iniciando rescate...`);
+
+            // Verificamos si la columna vieja todavía existe para intentar rescatar por texto
+            const [colAreaVieja] = await pool.query("SHOW COLUMNS FROM tickets LIKE 'area_origen'");
+            if (colAreaVieja.length > 0) {
+                await pool.query(`
+                    UPDATE tickets t
+                    JOIN areas a ON t.area_origen LIKE CONCAT('%', a.codigo, '%')
+                    SET t.id_area = a.id
+                    WHERE t.id_area IS NULL AND t.area_origen IS NOT NULL
+                `);
+            }
+
+            // Rescate cruzando con la tabla de usuarios
+            await pool.query(`
+                UPDATE tickets t
+                JOIN usuarios u ON t.solicitante = u.nombre
+                SET t.id_area = u.id_area
+                WHERE t.id_area IS NULL
+            `);
+
+            // Fallback: Todo lo que siga en NULL se va a Tecnología (ID 9)
+            const [huerfanosRestantes] = await pool.query("SELECT COUNT(*) AS total FROM tickets WHERE id_area IS NULL");
+            if (huerfanosRestantes[0].total > 0) {
+                console.log(`♻️  Asignando ${huerfanosRestantes[0].total} tickets anónimos a Tecnología (ID: 9)...`);
+                await pool.query("UPDATE tickets SET id_area = 9 WHERE id_area IS NULL");
+            }
+            console.log("✅ Rescate de tickets huérfanos completado.");
+        }
+
+        // ─────────────────────────────────────────────────────────────────────
+        // 18. Sincronización Dinámica de Áreas y Limpieza Estructural
+        // ─────────────────────────────────────────────────────────────────────
+        console.log("🔄 Verificando cambios de área en los usuarios...");
+
+        // Compara el id_area del ticket con el id_area actual del creador. 
+        // Si el usuario se cambió de área (son distintos), actualiza el ticket.
+        const [ticketsActualizados] = await pool.query(`
+            UPDATE tickets t
+            JOIN usuarios u ON t.solicitante = u.nombre
+            SET t.id_area = u.id_area
+            WHERE t.id_area != u.id_area
+        `);
+
+        if (ticketsActualizados.affectedRows > 0) {
+            console.log(`✅ Se actualizaron las áreas de ${ticketsActualizados.affectedRows} tickets porque sus creadores fueron transferidos.`);
+        }
+
+        // Borrado final de la columna de texto (Misión cumplida para Gustavo)
+        const [colAreaOrigenParaBorrar] = await pool.query("SHOW COLUMNS FROM tickets LIKE 'area_origen'");
+
+        if (colAreaOrigenParaBorrar.length > 0) {
+            console.log("🗑️  Eliminando la columna obsoleta 'area_origen' de la tabla tickets...");
+            await pool.query("ALTER TABLE tickets DROP COLUMN area_origen");
+            console.log("✅ Columna eliminada correctamente. Base de datos 100% normalizada.");
+        }
         console.log("✅ Base de datos actualizada y lista.");
 
     } catch (error) {
