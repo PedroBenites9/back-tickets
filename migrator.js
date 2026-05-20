@@ -196,20 +196,7 @@ const ejecutarMigraciones = async () => {
         `);
 
         // ─────────────────────────────────────────────────────────────────────
-        // 9. Columna 'area_origen' en la tabla 'tickets'
-        // ─────────────────────────────────────────────────────────────────────
-        const [colAreaOrigen] = await pool.query(
-            "SHOW COLUMNS FROM tickets LIKE 'area_origen'"
-        );
-        if (colAreaOrigen.length === 0) {
-            console.log("⚠️  Columna 'area_origen' no encontrada en tickets. Agregándola...");
-            await pool.query(
-                "ALTER TABLE tickets ADD COLUMN area_origen VARCHAR(100) AFTER cliente"
-            );
-        }
-
-        // ─────────────────────────────────────────────────────────────────────
-        // 10. Columna 'fecha' en la tabla 'comentarios'
+        // 9. Columna 'fecha' en la tabla 'comentarios'
         // ─────────────────────────────────────────────────────────────────────
         const [colFecha] = await pool.query(
             "SHOW COLUMNS FROM comentarios LIKE 'fecha'"
@@ -222,7 +209,7 @@ const ejecutarMigraciones = async () => {
         }
 
         // ─────────────────────────────────────────────────────────────────────
-        // 11. Eliminar índices UNIQUE duplicados en la tabla 'clientes'
+        // 10. Eliminar índices UNIQUE duplicados en la tabla 'clientes'
         // ─────────────────────────────────────────────────────────────────────
         console.log("🔍 Verificando índices duplicados en clientes...");
         const duplicados = [];
@@ -241,7 +228,7 @@ const ejecutarMigraciones = async () => {
         }
 
         // ─────────────────────────────────────────────────────────────────────
-        // 12. Columna 'comentario' en 'historial_tareas'
+        // 11S. Columna 'comentario' en 'historial_tareas'
         // ─────────────────────────────────────────────────────────────────────
         const [colComentario] = await pool.query(
             "SHOW COLUMNS FROM historial_tareas LIKE 'comentario'"
@@ -256,15 +243,15 @@ const ejecutarMigraciones = async () => {
         // ─────────────────────────────────────────────────────────────────────
         // 13. Columna 'archivo_adjunto' en 'historial_tareas'
         // ─────────────────────────────────────────────────────────────────────
-        const [colArchivo] = await pool.query(
-            "SHOW COLUMNS FROM historial_tareas LIKE 'archivo_adjunto'"
-        );
-        if (colArchivo.length === 0) {
-            console.log("⚠️  Columna 'archivo_adjunto' no encontrada en historial_tareas. Agregándola...");
-            await pool.query(
-                "ALTER TABLE historial_tareas ADD COLUMN archivo_adjunto VARCHAR(512) AFTER comentario"
-            );
-        }
+        // const [colArchivo] = await pool.query(
+        //     "SHOW COLUMNS FROM historial_tareas LIKE 'archivSo_adjunto'"
+        // );
+        // if (colArchivo.length === 0) {
+        //     console.log("⚠️  Columna 'archivo_adjunto' no encontrada en historial_tareas. Agregándola...");
+        //     await pool.query(
+        //         "ALTER TABLE historial_tareas ADD COLUMN archivo_adjunto VARCHAR(512) AFTER comentario"
+        //     );
+        // }
 
         // ─────────────────────────────────────────────────────────────────────
         // 14. Columna 'descripcion' en 'tareas_diarias'

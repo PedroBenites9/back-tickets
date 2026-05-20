@@ -79,7 +79,6 @@ export default function ticketRoutes(io) {
             WHERE t.id = ? AND t.status = 1
         `, [nextId]);
             const ticketNuevo = ticketsNuevos[0];
-            console.log("📢 MANDO ESTE TICKET POR SOCKET:", ticketNuevo);
             io.emit('ticketCreado', ticketNuevo);
 
             res.json(ticketNuevo);
@@ -129,10 +128,17 @@ export default function ticketRoutes(io) {
     // Editar ticket completo
     router.put('/editar/:id', async (req, res) => {
         try {
+
             const { id } = req.params;
-            const { asunto, categoria, prioridad, descripcion, tipo_origen, cliente, usuario_actual } = req.body;
+            const { asunto, categoria, prioridad, descripcion, tipo_origen, cliente, usuario_actual, solicitante } = req.body;
 
             const [ticketOriginal] = await pool.query('SELECT solicitante, descripcion FROM tickets WHERE id = ?', [id]);
+
+            // 👇 AGREGÁ ESTOS DOS ESPÍAS ACÁ 👇
+            console.log("=========================================");
+            console.log("📥 LLEGÓ PETICIÓN DE EDICIÓN PARA TICKET ID:", id);
+            console.log("📦 DATOS COMPLETOS DEL BODY:", req.body);
+            console.log("=========================================");
 
             if (ticketOriginal.length === 0) {
                 return res.status(404).json({ error: "Ticket no encontrado" });
@@ -140,6 +146,9 @@ export default function ticketRoutes(io) {
 
             const creador = ticketOriginal[0].solicitante;
             const descripcionOriginal = ticketOriginal[0].descripcion;
+
+            // Si el frontend manda un solicitante nuevo, lo usamos. Si no, dejamos el que ya estaba.
+            const solicitanteFinal = solicitante || creador;
 
             let descripcionFinal = descripcionOriginal;
 
@@ -157,14 +166,26 @@ export default function ticketRoutes(io) {
                 }
             }
 
+            // 2. Modificamos el UPDATE para incluir solicitante e id_area
             const query = `
-              UPDATE tickets 
-              SET asunto = ?, categoria = ?, prioridad = ?, descripcion = ?, tipo_origen = ?, cliente = ? 
-              WHERE id = ? AND status = 1
-            `;
-            await pool.query(query, [asunto, categoria, prioridad, descripcionFinal, tipo_origen, cliente || null, id]);
+            UPDATE tickets 
+            SET asunto = ?, categoria = ?, prioridad = ?, descripcion = ?, tipo_origen = ?, cliente = ?,
+                solicitante = ?, 
+                id_area = IFNULL((SELECT id_area FROM usuarios WHERE nombre = ? LIMIT 1), id_area)
+            WHERE id = ? AND status = 1
+        `;
 
-            const [ticketsModificados] = await pool.query('SELECT * FROM tickets WHERE id = ? AND status = 1', [id]);
+            // ¡OJO ACÁ! Tienen que estar los dos 'solicitanteFinal' seguidos antes del 'id'
+            await pool.query(query, [asunto, categoria, prioridad, descripcionFinal, tipo_origen, cliente || null, solicitanteFinal, solicitanteFinal, id]);
+
+            // 3. Modificamos el SELECT final para traer el nombre de la nueva área y mandarlo por WebSocket
+            const [ticketsModificados] = await pool.query(`
+            SELECT t.*, a.nombre AS nombre_area_origen 
+            FROM tickets t
+            LEFT JOIN areas a ON t.id_area = a.id
+            WHERE t.id = ? AND t.status = 1
+        `, [id]);
+
             const ticketNuevo = ticketsModificados[0];
 
             io.emit('ticketModificado', ticketNuevo);

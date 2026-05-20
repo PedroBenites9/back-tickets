@@ -241,6 +241,20 @@ export default function tareaRoutes(io) {
         }
     });
 
+    router.get('/historial/:id', async (req, res) => {
+        try {
+            const { id } = req.params;
+            const [historial] = await pool.query(
+                'SELECT * FROM historial_tareas WHERE tarea_id = ? AND status = 1 ORDER BY fecha_completada DESC',
+                [id]
+            );
+            res.json(historial);
+        } catch (error) {
+            console.error(`Error al obtener el historial de la tarea ${id}:`, error);
+            res.status(500).json({ error: "Error al obtener el historial específico" });
+        }
+    });
+
     //indicar nueva tarea
     router.get('/indicadores/:nombreUsuario', async (req, res) => {
         const { nombreUsuario } = req.params;
