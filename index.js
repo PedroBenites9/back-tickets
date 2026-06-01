@@ -40,6 +40,7 @@ app.use(express.json());
 // Servir archivos estáticos del frontend
 app.use(express.static(path.join(__dirname, 'public')));
 app.use('/api/tareas/archivo', express.static(path.join(__dirname, 'upload/tareas')));
+app.use('/api/tickets/archivo', express.static(path.join(__dirname, 'upload/tickets')));
 
 // Montar Rutas
 app.use('/api', authRoutes);

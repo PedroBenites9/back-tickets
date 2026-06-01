@@ -1,6 +1,29 @@
 import express from 'express';
 import pool from '../db.js';
 import { enviarCorreoResolucion } from '../utils/mail.js';
+import multer from 'multer';
+import path from 'path';
+import fs from 'fs';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+// Configuración de Multer para la bitácora de tickets
+const storage = multer.diskStorage({
+    destination: (req, file, cb) => {
+        // Subimos un nivel porque estamos en la carpeta /routes
+        const dir = path.join(__dirname, '..', 'upload', 'tickets');
+        if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+        cb(null, dir);
+    },
+    filename: (req, file, cb) => {
+        const ext = path.extname(file.originalname);
+        const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+        cb(null, `ticket-${req.params.id}-comentario-${uniqueSuffix}${ext}`);
+    }
+});
+const upload = multer({ storage });
 
 export default function ticketRoutes(io) {
     const router = express.Router();
@@ -8,6 +31,15 @@ export default function ticketRoutes(io) {
     // Ruta para obtener tickets dependiendo del ROL y ÁREA
     router.get('/', async (req, res) => {
         try {
+            // Actualizar tickets resueltos a "Cerrado Definitivo" si pasaron 5 días
+
+            await pool.query(`
+                UPDATE tickets 
+                SET estado = 'Cerrado Definitivo' 
+                WHERE estado = 'Resuelto' 
+                  AND fecha_finalizado IS NOT NULL 
+                  AND DATE_ADD(fecha_finalizado, INTERVAL 5 DAY) <= NOW()
+            `);
             const idRol = parseInt(req.query.id_rol) || 0;
             const idArea = parseInt(req.query.id_area) || 0;
 
@@ -39,13 +71,21 @@ export default function ticketRoutes(io) {
         }
     });
     // Crear un nuevo ticket
-    router.post('/', async (req, res) => {
+    router.post('/', upload.array('archivos', 10), async (req, res) => {
         try {
             const { asunto, categoria, prioridad, descripcion, tipo_origen, solicitante, cliente, area_origen, id_area } = req.body;
-
             const areaParaGuardar = id_area || area_origen || null;
 
-            // Manejo de Clientes: INSERT IGNORE evita errores si el nombre ya existe
+            let archivo_adjunto = null;
+
+            if (req.files && req.files.length > 0) {
+                const archivosData = req.files.map(file => ({
+                    ruta: file.path,
+                    nombreOriginal: file.originalname
+                }));
+                archivo_adjunto = JSON.stringify(archivosData);
+            }
+
             if (tipo_origen === 'Externo' && cliente) {
                 const [clienteGuardado] = await pool.query('INSERT IGNORE INTO clientes (nombre) VALUES (?)', [cliente]);
                 if (clienteGuardado.insertId) {
@@ -54,14 +94,14 @@ export default function ticketRoutes(io) {
                 }
             }
 
-            // 1. Insertamos el ticket sin código todavía   
+            // 1. Insertamos el ticket 
             const queryInsert = `
                 INSERT INTO tickets 
-                (asunto, categoria, prioridad, descripcion, tipo_origen, solicitante, cliente, id_area, estado)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'Abierto')
+                (asunto, categoria, prioridad, descripcion, archivo_adjunto, tipo_origen, solicitante, cliente, id_area, estado)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'Abierto')
             `;
             const [resultadoInsert] = await pool.query(queryInsert, [
-                asunto, categoria, prioridad, descripcion, tipo_origen, solicitante, cliente || null, areaParaGuardar
+                asunto, categoria, prioridad, descripcion, archivo_adjunto, tipo_origen, solicitante, cliente || null, areaParaGuardar
             ]);
 
             // 2. Usamos el ID autoincremental para armar el TK-XXXX
@@ -73,11 +113,12 @@ export default function ticketRoutes(io) {
 
             // 4. Buscamos el ticket completo para devolverlo al Frontend y por Sockets
             const [ticketsNuevos] = await pool.query(`
-            SELECT t.*, a.nombre AS nombre_area_origen 
-            FROM tickets t 
-            LEFT JOIN areas a ON t.id_area = a.id 
-            WHERE t.id = ? AND t.status = 1
-        `, [nextId]);
+                SELECT t.*, a.nombre AS nombre_area_origen 
+                FROM tickets t 
+                LEFT JOIN areas a ON t.id_area = a.id 
+                WHERE t.id = ? AND t.status = 1
+            `, [nextId]);
+
             const ticketNuevo = ticketsNuevos[0];
             io.emit('ticketCreado', ticketNuevo);
 
@@ -134,7 +175,6 @@ export default function ticketRoutes(io) {
 
             const [ticketOriginal] = await pool.query('SELECT solicitante, descripcion FROM tickets WHERE id = ?', [id]);
 
-            // 👇 AGREGÁ ESTOS DOS ESPÍAS ACÁ 👇
             console.log("=========================================");
             console.log("📥 LLEGÓ PETICIÓN DE EDICIÓN PARA TICKET ID:", id);
             console.log("📦 DATOS COMPLETOS DEL BODY:", req.body);
@@ -175,7 +215,6 @@ export default function ticketRoutes(io) {
             WHERE id = ? AND status = 1
         `;
 
-            // ¡OJO ACÁ! Tienen que estar los dos 'solicitanteFinal' seguidos antes del 'id'
             await pool.query(query, [asunto, categoria, prioridad, descripcionFinal, tipo_origen, cliente || null, solicitanteFinal, solicitanteFinal, id]);
 
             // 3. Modificamos el SELECT final para traer el nombre de la nueva área y mandarlo por WebSocket
@@ -218,7 +257,7 @@ export default function ticketRoutes(io) {
     // Eliminar ticket
     router.delete('/:id', async (req, res) => {
         const { id } = req.params;
-        const { rol, nombre_usuario } = req.query; // Necesitamos que el front mande estos datos
+        const { rol, nombre_usuario } = req.query;
 
         try {
             // 1. Buscamos el ticket para saber quién lo creó
@@ -226,8 +265,9 @@ export default function ticketRoutes(io) {
 
             if (ticket.length === 0) return res.status(404).json({ error: "Ticket no encontrado" });
 
-            // 2. Verificamos: ¿Es admin? ¿O es el dueño?
-            if (rol === 'admin' || ticket[0].solicitante === nombre_usuario) {
+            // 2. Verificamos: ¿Es admin (rol 1 o 'admin')? ¿O es el dueño?
+            // 👇 ACÁ ESTÁ EL CAMBIO CLAVE: Agregamos rol === '1' 👇
+            if (rol === 'admin' || rol === '1' || ticket[0].solicitante === nombre_usuario) {
                 await pool.query("UPDATE tickets SET status = 0 WHERE id = ?", [id]); // Borrado lógico
                 res.json({ message: "Ticket eliminado correctamente" });
             } else {
@@ -250,12 +290,25 @@ export default function ticketRoutes(io) {
         }
     });
 
-    router.post('/:id/comentarios', async (req, res) => {
+    router.post('/:id/comentarios', upload.array('archivos', 10), async (req, res) => {
         try {
             const { id } = req.params;
             const { autor, texto } = req.body;
 
-            const [resultado] = await pool.query('INSERT INTO comentarios (ticket_id, autor, mensaje) VALUES (?, ?, ?)', [id, autor, texto]);
+            let archivo_adjunto = null;
+
+            // Si recibimos archivos, armamos un array con sus rutas y lo pasamos a JSON string
+            if (req.files && req.files.length > 0) {
+                const archivosData = req.files.map(file => ({
+                    ruta: file.path,
+                    nombreOriginal: file.originalname
+                }));
+                archivo_adjunto = JSON.stringify(archivosData);
+            }
+            const [resultado] = await pool.query(
+                'INSERT INTO comentarios (ticket_id, autor, mensaje, archivo_adjunto) VALUES (?, ?, ?, ?)',
+                [id, autor, texto, archivo_adjunto]
+            );
 
             const [nuevoComentario] = await pool.query('SELECT * FROM comentarios WHERE id = ? AND status = 1', [resultado.insertId]);
             io.emit('nuevoComentario', nuevoComentario[0]);

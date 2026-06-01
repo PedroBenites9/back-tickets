@@ -395,6 +395,49 @@ const ejecutarMigraciones = async () => {
         }
         console.log("✅ Base de datos actualizada y lista.");
 
+        // ─────────────────────────────────────────────────────────────────────
+        // 19. Columna 'archivo_adjunto' en 'comentarios'
+        // ─────────────────────────────────────────────────────────────────────
+        const [colArchivoComentario] = await pool.query(
+            "SHOW COLUMNS FROM comentarios LIKE 'archivo_adjunto'"
+        );
+        if (colArchivoComentario.length === 0) {
+            console.log("⚠️  Columna 'archivo_adjunto' no encontrada en comentarios. Agregándola...");
+            await pool.query(
+                "ALTER TABLE comentarios ADD COLUMN archivo_adjunto VARCHAR(512) DEFAULT NULL AFTER mensaje"
+            );
+            console.log("✅ Columna 'archivo_adjunto' agregada a comentarios.");
+        }
+        // ─────────────────────────────────────────────────────────────────────
+        // 20. Ampliar columna 'archivo_adjunto' para soportar múltiples archivos
+        // ─────────────────────────────────────────────────────────────────────
+        console.log("♻️  Ampliando columna 'archivo_adjunto' a TEXT para multi-archivos...");
+        await pool.query(
+            "ALTER TABLE comentarios MODIFY COLUMN archivo_adjunto TEXT"
+        );
+
+        // ─────────────────────────────────────────────────────────────────────
+        // 21. Columna 'archivo_adjunto' en 'tickets' (Soporte Multi-Adjunto Inicial)
+        // ─────────────────────────────────────────────────────────────────────
+        const [colArchivoTicket] = await pool.query(
+            "SHOW COLUMNS FROM tickets LIKE 'archivo_adjunto'"
+        );
+        if (colArchivoTicket.length === 0) {
+            console.log("⚠️  Columna 'archivo_adjunto' no encontrada en tickets. Agregándola como TEXT...");
+            await pool.query(
+                "ALTER TABLE tickets ADD COLUMN archivo_adjunto TEXT DEFAULT NULL AFTER descripcion"
+            );
+            console.log("✅ Columna 'archivo_adjunto' agregada a tickets.");
+        } else {
+            // Si la columna ya existía como VARCHAR(512), la transformamos a TEXT para que no corte los JSONs largos
+            if (colArchivoTicket[0].Type !== 'text') {
+                console.log("♻️  Ampliando columna 'archivo_adjunto' de tickets a TEXT para multi-adjuntos...");
+                await pool.query(
+                    "ALTER TABLE tickets MODIFY COLUMN archivo_adjunto TEXT"
+                );
+                console.log("✅ Columna ampliada con éxito.");
+            }
+        }
     } catch (error) {
         console.error("❌ Error en la migración automática:", error);
         // Descomenta la siguiente línea si quieres que el contenedor falle

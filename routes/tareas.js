@@ -37,13 +37,22 @@ export default function tareaRoutes(io) {
         CASE 
             WHEN estado = 'En Curso' THEN 'En proceso'
             WHEN estado = 'Pausada' THEN 'En pausa'
-            WHEN (estado IS NULL OR estado = 'Pendiente') AND DATE_ADD(proxima_ejecucion, INTERVAL 10 MINUTE) < NOW() THEN 'Atrasada'
+            WHEN (estado IS NULL OR estado = 'Pendiente') AND DATE_ADD(IFNULL(proxima_ejecucion, CONCAT(fecha_unica, ' ', hora_programada)), INTERVAL 10 MINUTE) < NOW() THEN 'Atrasada'
             ELSE 'Esperando fecha'
         END AS estado_visual
             FROM tareas_diarias
             WHERE status = 1
-            ORDER BY proxima_ejecucion ASC`);
-            res.json(tareas);
+            ORDER BY IFNULL(proxima_ejecucion, CONCAT(fecha_unica, ' ', hora_programada)) ASC`);
+
+            // 🩹 PARCHE FRONTEND: Si hay tareas viejas con proxima_ejecucion en null, se lo armamos acá para que el React no se maree
+            const tareasLimpias = tareas.map(t => {
+                if (!t.proxima_ejecucion && t.frecuencia === 'Fecha Unica' && t.fecha_unica) {
+                    t.proxima_ejecucion = `${t.fecha_unica} ${t.hora_programada}`;
+                }
+                return t;
+            });
+
+            res.json(tareasLimpias);
         } catch (error) {
             console.error("Error en GET /api/tareas:", error);
             res.status(500).json({ error: "Error al obtener las tareas diarias" });
@@ -54,7 +63,12 @@ export default function tareaRoutes(io) {
     router.post('/', async (req, res) => {
         try {
             const { titulo, categoria, frecuencia, hora_programada, dias_especificos, fecha_unica } = req.body;
-            const proxima = calcularProximaEjecucion(frecuencia, hora_programada, dias_especificos, fecha_unica, true);
+            let proxima = calcularProximaEjecucion(frecuencia, hora_programada, dias_especificos, fecha_unica, true);
+
+            if (frecuencia === 'Fecha Unica' && !proxima && fecha_unica) {
+                proxima = `${fecha_unica} ${hora_programada}`;
+            }
+
             const diasJson = dias_especificos ? JSON.stringify(dias_especificos) : '[]';
 
             const query = `
@@ -209,7 +223,11 @@ export default function tareaRoutes(io) {
             const { id } = req.params;
             const { titulo, categoria, frecuencia, hora_programada, dias_especificos, fecha_unica } = req.body;
 
-            const proxima = calcularProximaEjecucion(frecuencia, hora_programada, dias_especificos, fecha_unica, false);
+            let proxima = calcularProximaEjecucion(frecuencia, hora_programada, dias_especificos, fecha_unica, false);
+
+            if (frecuencia === 'Fecha Unica' && !proxima && fecha_unica) {
+                proxima = `${fecha_unica} ${hora_programada}`;
+            }
             const diasJson = dias_especificos ? JSON.stringify(dias_especificos) : '[]';
 
             const query = `
@@ -265,16 +283,20 @@ export default function tareaRoutes(io) {
         WHERE status = 1 AND id NOT IN (SELECT tarea_id FROM vistas_tareas WHERE nombre_usuario = ?)
     `, [nombreUsuario]);
 
-            // B. Tareas Atrasadas (Ignorando las borradas)
+            // B. Tareas Atrasadas (Ignorando las borradas Y las que ya están en curso/completadas)
             const [atrasadas] = await pool.query(`
         SELECT COUNT(*) as total FROM tareas_diarias 
-        WHERE proxima_ejecucion < NOW() AND status = 1
+        WHERE IFNULL(proxima_ejecucion, CONCAT(fecha_unica, ' ', hora_programada)) < NOW() 
+          AND status = 1 
+          AND (estado IS NULL OR estado = 'Pendiente')
     `);
 
-            // C. Tareas Próximas (Ignorando las borradas)
+            // C. Tareas Próximas (Ignorando las borradas Y finalizadas)
             const [proximas] = await pool.query(`
         SELECT COUNT(*) as total FROM tareas_diarias 
-        WHERE proxima_ejecucion >= NOW() AND status = 1
+        WHERE IFNULL(proxima_ejecucion, CONCAT(fecha_unica, ' ', hora_programada)) >= NOW() 
+          AND status = 1 
+          AND (estado IS NULL OR estado = 'Pendiente')
     `);
 
             res.json({
