@@ -28,34 +28,73 @@ const upload = multer({ storage });
 export default function tareaRoutes(io) {
     const router = express.Router();
 
-    // Obtener todas las tareas
+    // Obtener todas las tareas activas con auto-cierre de días pasados
     router.get('/', async (req, res) => {
         try {
-            const [tareas] = await pool.query(`
-            SELECT 
-        *,
-        CASE 
-            WHEN estado = 'En Curso' THEN 'En proceso'
-            WHEN estado = 'Pausada' THEN 'En pausa'
-            WHEN (estado IS NULL OR estado = 'Pendiente') AND DATE_ADD(IFNULL(proxima_ejecucion, CONCAT(fecha_unica, ' ', hora_programada)), INTERVAL 10 MINUTE) < NOW() THEN 'Atrasada'
-            ELSE 'Esperando fecha'
-        END AS estado_visual
-            FROM tareas_diarias
-            WHERE status = 1
-            ORDER BY IFNULL(proxima_ejecucion, CONCAT(fecha_unica, ' ', hora_programada)) ASC`);
+            // 🔍 1. Buscamos tareas cuya fecha programada sea estrictamente anterior a hoy
+            const [tareasVencidas] = await pool.query(`
+                SELECT * FROM tareas_diarias 
+                WHERE status = 1 
+                  AND proxima_ejecucion IS NOT NULL 
+                  AND DATE(proxima_ejecucion) < CURDATE()
+            `);
 
-            // 🩹 PARCHE FRONTEND: Si hay tareas viejas con proxima_ejecucion en null, se lo armamos acá para que el React no se maree
-            const tareasLimpias = tareas.map(t => {
-                if (!t.proxima_ejecucion && t.frecuencia === 'Fecha Unica' && t.fecha_unica) {
-                    t.proxima_ejecucion = `${t.fecha_unica} ${t.hora_programada}`;
+            for (const tarea of tareasVencidas) {
+                // Registrar en el histórico que la tarea NO se realizada a tiempo
+                await pool.query(`
+                    INSERT INTO historial_tareas 
+                    (tarea_id, titulo_tarea, usuario_que_completo, tiempo_total_minutos, fecha_inicio, status, fecha_completada, comentario, archivo_adjunto)
+                    VALUES (?, ?, ?, ?, ?, ?, NOW(), ?, ?)
+                `, [
+                    tarea.id,
+                    tarea.titulo,
+                    'Sistema (No realizada por alguien)',
+                    0,
+                    null,
+                    1,
+                    'Rutina no realizada en la fecha estipulada (Salto automático por vencimiento)',
+                    null
+                ]);
+
+                if (tarea.frecuencia === 'Fecha Unica') {
+                    await pool.query('UPDATE tareas_diarias SET status = 0 WHERE id = ?', [tarea.id]);
+                } else {
+                    let tareaFormateada = { ...tarea };
+                    if (typeof tarea.dias_especificos === 'string') {
+                        try {
+                            tareaFormateada.dias_especificos = JSON.parse(tarea.dias_especificos);
+                        } catch (e) {
+                            tareaFormateada.dias_especificos = tarea.dias_especificos.split(',').map(d => d.trim());
+                        }
+                    }
+
+                    try {
+                        const proximaFecha = calcularProximaEjecucion(tareaFormateada);
+                        await pool.query('UPDATE tareas_diarias SET proxima_ejecucion = ?, estado = "Pendiente" WHERE id = ?', [proximaFecha, tarea.id]);
+                    } catch (errSched) {
+                        console.error("Error al calcular próximo salto:", errSched);
+                        // Fallback de seguridad si falla el cálculo
+                        await pool.query('UPDATE tareas_diarias SET estado = "Pendiente" WHERE id = ?', [tarea.id]);
+                    }
                 }
-                return t;
-            });
+            }
 
-            res.json(tareasLimpias);
+            // 2. Traemos las tareas del tablero que quedaron vigentes para hoy o el futuro
+            const [tareas] = await pool.query(`
+                SELECT *,
+                CASE 
+                    WHEN estado = 'En Curso' THEN 'En proceso'
+                    WHEN estado = 'Pausada' THEN 'En pausa'
+                    ELSE 'Pendiente'
+                END as estado_visual
+                FROM tareas_diarias 
+                WHERE status = 1
+            `);
+
+            res.json(tareas);
         } catch (error) {
-            console.error("Error en GET /api/tareas:", error);
-            res.status(500).json({ error: "Error al obtener las tareas diarias" });
+            console.error("Error al sincronizar tareas vencidas:", error);
+            res.status(500).json({ error: "Error al obtener el listado de tareas" });
         }
     });
 
@@ -118,16 +157,19 @@ export default function tareaRoutes(io) {
             const { id } = req.params;
             const [tareaActual] = await pool.query('SELECT fecha_inicio_real, tiempo_acumulado_minutos FROM tareas_diarias WHERE id = ? AND status = 1', [id]);
 
-            if (tareaActual.length === 0 || !tareaActual[0].fecha_inicio_real) {
-                return res.status(400).json({ error: "La tarea no está en curso o no tiene fecha de inicio." });
+            if (tareaActual.length === 0) {
+                return res.status(404).json({ error: "Tarea no encontrada." });
             }
 
+            const tieneInicioReal = !!tareaActual[0].fecha_inicio_real;
+
             // MariaDB: Usamos TIMESTAMPDIFF para calcular los minutos con decimales (segundos / 60)
+            // Solo acumulamos tiempo si realmente estaba "Iniciada"
             const query = `
                 UPDATE tareas_diarias 
                 SET en_pausa = TRUE,
                     estado = 'Pausada',
-                    tiempo_acumulado_minutos = COALESCE(tiempo_acumulado_minutos, 0) + (TIMESTAMPDIFF(SECOND, fecha_inicio_real, CURRENT_TIMESTAMP) / 60.0),
+                    tiempo_acumulado_minutos = ${tieneInicioReal ? 'COALESCE(tiempo_acumulado_minutos, 0) + (TIMESTAMPDIFF(SECOND, fecha_inicio_real, CURRENT_TIMESTAMP) / 60.0)' : 'COALESCE(tiempo_acumulado_minutos, 0)'},
                     fecha_inicio_real = NULL 
                 WHERE id = ? AND status = 1
             `;
@@ -142,12 +184,28 @@ export default function tareaRoutes(io) {
         }
     });
 
-    // Completar tarea (con comentario y archivo)
-    router.put('/:id/completar', upload.single('archivo'), async (req, res) => {
+    // Completar tarea (con comentario y archivos múltiples aditivos)
+    router.put('/:id/completar', upload.array('archivos', 5), async (req, res) => {
         try {
             const { id } = req.params;
-            const { usuario, comentario } = req.body;
-            const archivo_adjunto = req.file ? req.file.path : null;
+            const { usuario, comentario, archivosViejos } = req.body;
+
+            // 1. Tomamos los nombres de los archivos NUEVOS
+            const nombresNuevos = req.files ? req.files.map(f => f.filename) : [];
+
+            // 2. Tomamos los nombres de los archivos que el usuario decidió MANTENER
+            let nombresMantener = [];
+            if (archivosViejos) {
+                try {
+                    nombresMantener = JSON.parse(archivosViejos);
+                } catch (e) {
+                    nombresMantener = Array.isArray(archivosViejos) ? archivosViejos : [archivosViejos];
+                }
+            }
+
+            // 3. Unimos ambos grupos
+            const totalArchivos = [...nombresMantener, ...nombresNuevos];
+            const archivo_adjunto = totalArchivos.length > 0 ? JSON.stringify(totalArchivos) : null;
 
             const [tareaRow] = await pool.query(
                 'SELECT titulo, hora_programada, fecha_inicio_real, tiempo_acumulado_minutos, hora_primer_inicio, frecuencia, dias_especificos, fecha_unica FROM tareas_diarias WHERE id = ? AND status = 1',
@@ -340,10 +398,57 @@ export default function tareaRoutes(io) {
             res.status(500).json({ error: "No se pudieron cargar las opciones" });
         }
     });
-    router.put('/configuracion/frecuencias/:codigo/desactivar', async (req, res) => {
-        const { codigo } = req.params;
-        await pool.query("UPDATE frecuencias_permitidas SET activa = 0 WHERE codigo = ?", [codigo]);
-        res.json({ mensaje: "Frecuencia eliminada con éxito" });
+
+    // Ruta para actualizar el usuario asignado
+    router.put('/:id/asignar', async (req, res) => {
+        const { id } = req.params;
+        const { usuario_asignado } = req.body;
+        try {
+            await pool.query(
+                "UPDATE tareas_diarias SET usuario_asignado = ? WHERE id = ?",
+                [usuario_asignado, id]
+            );
+
+            // Buscamos la tarea actualizada para avisar a todos por bitácora/socket
+            const [rows] = await pool.query("SELECT * FROM tareas_diarias WHERE id = ?", [id]);
+            if (rows.length > 0) {
+                io.emit('tareaModificada', rows[0]);
+            }
+
+            // Socket.io emission on task assignment to ensure real-time UI synchronization across clients.
+            io.emit('tareaAsignada', { idTarea: id, usuarioAsignado: usuario_asignado });
+
+            res.json({ message: "Usuario asignado con éxito" });
+        } catch (error) {
+            console.error("Error al asignar usuario:", error);
+            res.status(500).json({ error: "Error interno al asignar usuario" });
+        }
     });
+
+    // Ruta para obtener el historial de una tarea específica (por su título)
+    router.get('/historial/:id', async (req, res) => {
+        const { id } = req.params;
+        try {
+            // 1. Obtenemos el título de la tarea actual
+            const [tarea] = await pool.query("SELECT titulo FROM tareas_diarias WHERE id = ?", [id]);
+            if (tarea.length === 0) return res.status(404).json({ error: "Tarea no encontrada" });
+
+            const titulo = tarea[0].titulo;
+
+            // 2. Buscamos en el historial todas las ejecuciones de esta tarea
+            const [historial] = await pool.query(`
+                SELECT * FROM historial_tareas 
+                WHERE titulo_tarea = ? 
+                ORDER BY fecha_completada DESC 
+                LIMIT 50
+            `, [titulo]);
+
+            res.json(historial);
+        } catch (error) {
+            console.error("Error al obtener historial de tarea:", error);
+            res.status(500).json({ error: "Error al obtener el historial" });
+        }
+    });
+
     return router;
 }

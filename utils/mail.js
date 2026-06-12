@@ -55,7 +55,7 @@ const getLayoutHTML = (contenido) => `
         </div>
         <div class="footer">
             <img src="cid:favicon" alt="Icon" style="width:16px; margin-bottom: -3px;">
-            <strong>Cruz de Malta S.A.</strong><br>
+            <strong>Cooperativa de Trabajo Cruz de Malta</strong><br>
             Este es un correo automático, por favor no respondas a este mensaje.
         </div>
     </div>

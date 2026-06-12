@@ -438,6 +438,25 @@ const ejecutarMigraciones = async () => {
                 console.log("✅ Columna ampliada con éxito.");
             }
         }
+
+        // ─────────────────────────────────────────────────────────────────────
+        // 22. Columna 'usuario_asignado' en 'tareas_diarias' (Tablero Kanban)
+        // ─────────────────────────────────────────────────────────────────────
+        const [colUsuarioAsignado] = await pool.query(
+            "SHOW COLUMNS FROM tareas_diarias LIKE 'usuario_asignado'"
+        );
+
+        if (colUsuarioAsignado.length === 0) {
+            console.log("⚠️  Columna 'usuario_asignado' no encontrada en tareas_diarias. Agregándola...");
+            await pool.query(
+                "ALTER TABLE tareas_diarias ADD COLUMN usuario_asignado VARCHAR(100) DEFAULT NULL"
+            );
+            console.log("✅ Columna 'usuario_asignado' agregada con éxito a tareas_diarias.");
+        } else {
+            console.log("✏️  La columna 'usuario_asignado' en tareas_diarias ya existe, saltando...");
+        }
+
+
     } catch (error) {
         console.error("❌ Error en la migración automática:", error);
         // Descomenta la siguiente línea si quieres que el contenedor falle
