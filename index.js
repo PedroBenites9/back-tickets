@@ -39,8 +39,33 @@ app.use(express.json());
 
 // Servir archivos estáticos del frontend
 app.use(express.static(path.join(__dirname, 'public')));
-app.use('/api/tareas/archivo', express.static(path.join(__dirname, 'upload/tareas')));
-app.use('/api/tickets/archivo', express.static(path.join(__dirname, 'upload/tickets')));
+import fs from 'fs';
+
+// Helper para servir archivos con nombre personalizado
+const servirArchivoConNombre = (req, res, directorio) => {
+    const filename = req.params.filename;
+    const itemName = req.query.name || req.query.ticketName; // Soporte genérico para ticketName o name
+    const filePath = path.join(directorio, filename);
+
+    if (fs.existsSync(filePath)) {
+        if (itemName) {
+            const ext = path.extname(filename);
+            // Formato de fecha YYYY-MM-DD_HH-MM-SS
+            const dateStr = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19).replace('T', '_');
+            const cleanName = itemName.replace(/[^a-zA-Z0-9_\-\s]/g, '_').trim();
+            const downloadName = `${cleanName}_${dateStr}${ext}`;
+
+            res.setHeader('Content-Disposition', `inline; filename="${downloadName}"`);
+        }
+        res.sendFile(filePath);
+    } else {
+        res.status(404).send('Archivo no encontrado');
+    }
+};
+
+app.get('/api/tareas/archivo/:filename', (req, res) => servirArchivoConNombre(req, res, path.join(__dirname, 'upload/tareas')));
+app.get('/api/tickets/archivo/:filename', (req, res) => servirArchivoConNombre(req, res, path.join(__dirname, 'upload/tickets')));
+
 
 // Montar Rutas
 app.use('/api', authRoutes);

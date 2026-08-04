@@ -1,6 +1,6 @@
 import express from 'express';
 import pool from '../db.js';
-import { enviarCorreoResolucion } from '../utils/mail.js';
+import { enviarCorreoResolucion, enviarCorreoNuevoMensaje } from '../utils/mail.js';
 import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
@@ -42,6 +42,7 @@ export default function ticketRoutes(io) {
             `);
             const idRol = parseInt(req.query.id_rol) || 0;
             const idArea = parseInt(req.query.id_area) || 0;
+            const solicitante = req.query.solicitante || '';
 
             let query = '';
             let parametros = [];
@@ -60,7 +61,7 @@ export default function ticketRoutes(io) {
             } else {
                 // Usuarios finales ven solo su área
                 query = `${selectBase} WHERE t.id_area = ? AND t.status = 1 ORDER BY t.fecha_creacion DESC`;
-                parametros = [idArea];
+                parametros = [idArea, solicitante];
             }
 
             const [tickets] = await pool.query(query, parametros);
@@ -297,7 +298,6 @@ export default function ticketRoutes(io) {
 
             let archivo_adjunto = null;
 
-            // Si recibimos archivos, armamos un array con sus rutas y lo pasamos a JSON string
             if (req.files && req.files.length > 0) {
                 const archivosData = req.files.map(file => ({
                     ruta: file.path,
@@ -305,17 +305,51 @@ export default function ticketRoutes(io) {
                 }));
                 archivo_adjunto = JSON.stringify(archivosData);
             }
+
+            // 1. Guardamos el comentario en la base de datos
             const [resultado] = await pool.query(
                 'INSERT INTO comentarios (ticket_id, autor, mensaje, archivo_adjunto) VALUES (?, ?, ?, ?)',
                 [id, autor, texto, archivo_adjunto]
             );
 
             const [nuevoComentario] = await pool.query('SELECT * FROM comentarios WHERE id = ? AND status = 1', [resultado.insertId]);
+
+            // Emitimos por Socket para que el front se actualice al instante
             io.emit('nuevoComentario', nuevoComentario[0]);
+
+            // Respondemos rápido al cliente para no bloquear la interfaz
             res.json(nuevoComentario[0]);
+
+            try {
+                // Buscamos el ticket para saber quién es el solicitante
+                const [ticketData] = await pool.query('SELECT * FROM tickets WHERE id = ? AND status = 1', [id]);
+
+                if (ticketData.length > 0) {
+                    const ticketActual = ticketData[0];
+
+                    // Solo mandamos el mail si el que comenta NO es el creador del ticket
+                    // (Ej: Si Matias Basile comenta su propio ticket, no le mandamos un mail a sí mismo)
+                    if (autor !== ticketActual.solicitante) {
+                        // Buscamos el email del solicitante
+                        const [usuarioData] = await pool.query('SELECT email FROM usuarios WHERE nombre = ? AND status = 1', [ticketActual.solicitante]);
+
+                        if (usuarioData.length > 0 && usuarioData[0].email) {
+                            // Enviamos el correo pasando el emailDestino, el ticket entero, el texto (HTML de Quill) y el autor
+                            await enviarCorreoNuevoMensaje(usuarioData[0].email, ticketActual, texto, autor);
+                        }
+                    }
+                }
+            } catch (mailError) {
+                // Atrapamos el error acá para que si el SMTP falla, no crashee todo el endpoint de comentarios
+                console.error("❌ Error enviando mail de notificación de comentario:", mailError);
+            }
+
         } catch (error) {
             console.error("Error al crear comentario:", error);
-            res.status(500).json({ error: "Error al guardar el comentario" });
+            // Solo respondemos con error si falla la creación del comentario (BD)
+            if (!res.headersSent) {
+                res.status(500).json({ error: "Error al guardar el comentario" });
+            }
         }
     });
 

@@ -106,3 +106,24 @@ export const enviarCorreoResolucion = async (emailDestino, ticket) => {
         console.error("❌ Error al armar/enviar el correo de resolución:", error);
     }
 };
+
+export const enviarCorreoNuevoMensaje = async (emailDestino, ticket, mensajeHTML, autor) => {
+    try {
+        const asuntoTicket = `💬 Nuevo mensaje en el Ticket: ${ticket.codigo}`;
+
+        const contenidoHTML = `
+            <h3 style="color: #0d6efd;">Actualización en tu ticket</h3>
+            <p>El usuario <strong>${autor}</strong> ha agregado un nuevo mensaje al ticket <span class="highlight">${ticket.codigo}</span>:</p>
+            
+            <div style="background-color: #f8f9fa; border-left: 4px solid #0d6efd; padding: 15px; margin: 20px 0; font-style: italic; color: #555;">
+                ${mensajeHTML}
+            </div>
+
+            <p>Ingresá al sistema ATN para ver el historial completo o responder.</p>
+        `;
+
+        await enviarCorreoMagico(emailDestino, asuntoTicket, contenidoHTML);
+    } catch (error) {
+        console.error("❌ Error al armar/enviar el correo de nuevo mensaje:", error);
+    }
+};

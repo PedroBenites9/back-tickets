@@ -28,58 +28,77 @@ const upload = multer({ storage });
 export default function tareaRoutes(io) {
     const router = express.Router();
 
-    // Obtener todas las tareas activas con auto-cierre de días pasados
+    // Obtener todas las tareas activas con auto-cierre INTELIGENTE (Por Ciclo)
     router.get('/', async (req, res) => {
         try {
-            // 🔍 1. Buscamos tareas cuya fecha programada sea estrictamente anterior a hoy
-            const [tareasVencidas] = await pool.query(`
+            // REVISIÓN DE CICLOS VENCIDOS
+            const [tareasActivas] = await pool.query(`
                 SELECT * FROM tareas_diarias 
                 WHERE status = 1 
-                  AND proxima_ejecucion IS NOT NULL 
-                  AND DATE(proxima_ejecucion) < CURDATE()
+                  AND estado NOT IN ('En Curso', 'Pausada') 
+                  AND en_pausa = 0
             `);
 
-            for (const tarea of tareasVencidas) {
-                // Registrar en el histórico que la tarea NO se realizada a tiempo
-                await pool.query(`
-                    INSERT INTO historial_tareas 
-                    (tarea_id, titulo_tarea, usuario_que_completo, tiempo_total_minutos, fecha_inicio, status, fecha_completada, comentario, archivo_adjunto)
-                    VALUES (?, ?, ?, ?, ?, ?, NOW(), ?, ?)
-                `, [
-                    tarea.id,
-                    tarea.titulo,
-                    'Sistema (No realizada por alguien)',
-                    0,
-                    null,
-                    1,
-                    'Rutina no realizada en la fecha estipulada (Salto automático por vencimiento)',
-                    null
-                ]);
+            const hoy = new Date();
+            hoy.setHours(0, 0, 0, 0);
+            const diaSemanaHoy = hoy.getDay();
 
-                if (tarea.frecuencia === 'Fecha Unica') {
-                    await pool.query('UPDATE tareas_diarias SET status = 0 WHERE id = ?', [tarea.id]);
-                } else {
-                    let tareaFormateada = { ...tarea };
-                    if (typeof tarea.dias_especificos === 'string') {
-                        try {
-                            tareaFormateada.dias_especificos = JSON.parse(tarea.dias_especificos);
-                        } catch (e) {
-                            tareaFormateada.dias_especificos = tarea.dias_especificos.split(',').map(d => d.trim());
-                        }
+            for (const tarea of tareasActivas) {
+                if (!tarea.proxima_ejecucion) continue;
+
+                const fechaProx = new Date(tarea.proxima_ejecucion);
+                fechaProx.setHours(0, 0, 0, 0);
+
+                // Si la tarea es de hoy o del futuro, la ignoramos (está al día)
+                if (fechaProx >= hoy) continue;
+
+                let cicloVencido = false;
+
+                // LÓGICA DE CICLO: Si hoy volvió a tocar el día de la tarea, el ciclo anterior caducó.
+                if (tarea.frecuencia === 'Dias Especificos') {
+                    let dias = [];
+                    try {
+                        dias = typeof tarea.dias_especificos === 'string' ? JSON.parse(tarea.dias_especificos) : tarea.dias_especificos;
+                    } catch (e) {
+                        dias = tarea.dias_especificos ? tarea.dias_especificos.split(',').map(Number) : [];
                     }
 
-                    try {
-                        const proximaFecha = calcularProximaEjecucion(tareaFormateada);
-                        await pool.query('UPDATE tareas_diarias SET proxima_ejecucion = ?, estado = "Pendiente" WHERE id = ?', [proximaFecha, tarea.id]);
-                    } catch (errSched) {
-                        console.error("Error al calcular próximo salto:", errSched);
-                        // Fallback de seguridad si falla el cálculo
-                        await pool.query('UPDATE tareas_diarias SET estado = "Pendiente" WHERE id = ?', [tarea.id]);
+                    if (dias.includes(diaSemanaHoy)) {
+                        cicloVencido = true;
+                    }
+                } else {
+                    // Para otras frecuencias (Semanal, etc.), caduca si pasaron 7 días
+                    const diasAtraso = Math.floor((hoy - fechaProx) / (1000 * 60 * 60 * 24));
+                    if (diasAtraso >= 7) cicloVencido = true;
+                }
+
+                if (cicloVencido) {
+                    // 1. Mandamos al historial la tarea que nadie hizo en toda la semana
+                    await pool.query(`
+                        INSERT INTO historial_tareas 
+                        (tarea_id, titulo_tarea, usuario_que_completo, tiempo_total_minutos, fecha_inicio, status, fecha_completada, comentario)
+                        VALUES (?, ?, ?, ?, ?, ?, NOW(), ?)
+                    `, [tarea.id, tarea.titulo, 'Sistema (No realizada)', 0, null, 1, 'Rutina no realizada en la fecha estipulada (Salto de ciclo)']);
+
+                    // 2. Reprogramamos la tarea para HOY (su nuevo ciclo)
+                    if (tarea.frecuencia === 'Fecha Unica') {
+                        await pool.query('UPDATE tareas_diarias SET status = 0 WHERE id = ?', [tarea.id]);
+                    } else {
+                        let tareaFormateada = { ...tarea };
+                        if (typeof tarea.dias_especificos === 'string') {
+                            try { tareaFormateada.dias_especificos = JSON.parse(tarea.dias_especificos); } catch (e) { }
+                        }
+                        try {
+                            const nuevaProxima = calcularProximaEjecucion(tareaFormateada);
+                            await pool.query('UPDATE tareas_diarias SET proxima_ejecucion = ?, estado = "Pendiente" WHERE id = ?', [nuevaProxima, tarea.id]);
+                        } catch (e) {
+                            await pool.query('UPDATE tareas_diarias SET estado = "Pendiente" WHERE id = ?', [tarea.id]);
+                        }
                     }
                 }
             }
 
-            // 2. Traemos las tareas del tablero que quedaron vigentes para hoy o el futuro
+            // 2. TRAER DATOS PARA EL FRONTEND
             const [tareas] = await pool.query(`
                 SELECT *,
                 CASE 
@@ -93,7 +112,7 @@ export default function tareaRoutes(io) {
 
             res.json(tareas);
         } catch (error) {
-            console.error("Error al sincronizar tareas vencidas:", error);
+            console.error("Error al sincronizar tareas:", error);
             res.status(500).json({ error: "Error al obtener el listado de tareas" });
         }
     });
@@ -447,6 +466,36 @@ export default function tareaRoutes(io) {
         } catch (error) {
             console.error("Error al obtener historial de tarea:", error);
             res.status(500).json({ error: "Error al obtener el historial" });
+        }
+    });
+
+    router.get('/archivo/*', (req, res) => {
+        try {
+            // req.params[0] captura todo lo que venga después de /archivo/ 
+            // (Ej: "/app/back-tickets/upload/tareas/tarea-5-xxx.xlsx" o "tarea-5-xxx.xlsx")
+            const rutaOFilename = req.params[0];
+
+            if (!rutaOFilename) {
+                return res.status(400).json({ error: "No se especificó un archivo" });
+            }
+
+            // path.basename extrae SOLO el nombre final (tarea-5-xxx.xlsx), 
+            // eliminando cualquier carpeta o barra delantera
+            const filenameLimpio = path.basename(rutaOFilename);
+
+            // Armamos el camino seguro hacia la carpeta de subidas
+            const filePath = path.join(__dirname, '..', 'upload', 'tareas', filenameLimpio);
+
+            // Verificamos si el archivo físico existe en el disco
+            if (fs.existsSync(filePath)) {
+                return res.download(filePath, filenameLimpio);
+            } else {
+                console.error(`❌ Archivo no encontrado en el servidor: ${filePath}`);
+                return res.status(404).json({ error: "El archivo físico no existe en el servidor" });
+            }
+        } catch (error) {
+            console.error("Error en la descarga de archivo de tarea:", error);
+            res.status(500).json({ error: "Error interno al procesar la descarga" });
         }
     });
 
