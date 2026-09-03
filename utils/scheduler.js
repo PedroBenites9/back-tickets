@@ -49,6 +49,7 @@ export function calcularProximaEjecucion(frecuencia, hora_programada, dias_espec
         } else {
             if (frecuencia === 'Diaria') proxima.setUTCDate(proxima.getUTCDate() + 1);
             else if (frecuencia === 'Semanal') proxima.setUTCDate(proxima.getUTCDate() + 7);
+            else if (frecuencia === 'Quincenal') proxima.setUTCDate(proxima.getUTCDate() + 15);
             else if (frecuencia === 'Mensual') proxima.setUTCMonth(proxima.getUTCMonth() + 1);
             else if (frecuencia === 'Bimestral') proxima.setUTCMonth(proxima.getUTCMonth() + 2);
             else if (frecuencia === 'Trimestral') proxima.setUTCMonth(proxima.getUTCMonth() + 3);

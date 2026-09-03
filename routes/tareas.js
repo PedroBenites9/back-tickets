@@ -120,7 +120,8 @@ export default function tareaRoutes(io) {
     // Crear tarea
     router.post('/', async (req, res) => {
         try {
-            const { titulo, categoria, frecuencia, hora_programada, dias_especificos, fecha_unica } = req.body;
+            const { titulo, categoria, frecuencia, dias_especificos, fecha_unica, descripcion } = req.body;
+            const hora_programada = '00:00';
             let proxima = calcularProximaEjecucion(frecuencia, hora_programada, dias_especificos, fecha_unica, true);
 
             if (frecuencia === 'Fecha Unica' && !proxima && fecha_unica) {
@@ -130,10 +131,10 @@ export default function tareaRoutes(io) {
             const diasJson = dias_especificos ? JSON.stringify(dias_especificos) : '[]';
 
             const query = `
-              INSERT INTO tareas_diarias (titulo, categoria, frecuencia, hora_programada, proxima_ejecucion, dias_especificos, fecha_unica) 
-              VALUES (?, ?, ?, ?, ?, ?, ?)
+              INSERT INTO tareas_diarias (titulo, categoria, frecuencia, hora_programada, proxima_ejecucion, dias_especificos, fecha_unica, descripcion) 
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             `;
-            const [resultado] = await pool.query(query, [titulo, categoria, frecuencia, hora_programada, proxima, diasJson, fecha_unica || null]);
+            const [resultado] = await pool.query(query, [titulo, categoria, frecuencia, hora_programada, proxima, diasJson, fecha_unica || null, descripcion || null]);
 
             // En MariaDB usamos insertId para buscar la fila recién creada
             const [nuevaTareaRows] = await pool.query('SELECT * FROM tareas_diarias WHERE id = ? AND status = 1', [resultado.insertId]);
@@ -227,13 +228,13 @@ export default function tareaRoutes(io) {
             const archivo_adjunto = totalArchivos.length > 0 ? JSON.stringify(totalArchivos) : null;
 
             const [tareaRow] = await pool.query(
-                'SELECT titulo, hora_programada, fecha_inicio_real, tiempo_acumulado_minutos, hora_primer_inicio, frecuencia, dias_especificos, fecha_unica FROM tareas_diarias WHERE id = ? AND status = 1',
+                'SELECT titulo, hora_programada, fecha_inicio_real, tiempo_acumulado_minutos, hora_primer_inicio, frecuencia, dias_especificos, fecha_unica, descripcion FROM tareas_diarias WHERE id = ? AND status = 1',
                 [id]
             );
 
             if (tareaRow.length === 0) return res.status(404).json({ error: "Tarea no encontrada" });
 
-            const { titulo, hora_programada, fecha_inicio_real, tiempo_acumulado_minutos, hora_primer_inicio, frecuencia, dias_especificos, fecha_unica } = tareaRow[0];
+            const { titulo, hora_programada, fecha_inicio_real, tiempo_acumulado_minutos, hora_primer_inicio, frecuencia, dias_especificos, fecha_unica, descripcion } = tareaRow[0];
 
             let tiempoFinal = parseFloat(tiempo_acumulado_minutos) || 0;
             if (fecha_inicio_real) {
@@ -245,8 +246,8 @@ export default function tareaRoutes(io) {
             }
 
             await pool.query(
-                'INSERT INTO historial_tareas (tarea_id, titulo_tarea, usuario_que_completo, tiempo_total_minutos, fecha_inicio, comentario, archivo_adjunto) VALUES (?, ?, ?, ?, ?, ?, ?)',
-                [id, titulo, usuario || 'Sistema', tiempoFinal, hora_primer_inicio, comentario || null, archivo_adjunto]
+                'INSERT INTO historial_tareas (tarea_id, titulo_tarea, usuario_que_completo, tiempo_total_minutos, fecha_inicio, comentario, instrucciones_tarea, archivo_adjunto) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+                [id, titulo, usuario || 'Sistema', tiempoFinal, hora_primer_inicio, comentario || null, descripcion || null, archivo_adjunto]
             );
 
             if (frecuencia === 'Fecha Unica') {
@@ -256,7 +257,7 @@ export default function tareaRoutes(io) {
                 return res.json(tareas[0]);
             }
 
-            const nuevaProxima = calcularProximaEjecucion(frecuencia, hora_programada, dias_especificos, fecha_unica, false);
+            const nuevaProxima = calcularProximaEjecucion(frecuencia, '00:00', dias_especificos, fecha_unica, false);
 
             const queryReprogramar = `
               UPDATE tareas_diarias 
@@ -298,28 +299,48 @@ export default function tareaRoutes(io) {
     router.put('/:id', async (req, res) => {
         try {
             const { id } = req.params;
-            const { titulo, categoria, frecuencia, hora_programada, dias_especificos, fecha_unica } = req.body;
+            const { titulo, categoria, frecuencia, dias_especificos, fecha_unica, descripcion, hora_programada } = req.body;
 
-            let proxima = calcularProximaEjecucion(frecuencia, hora_programada, dias_especificos, fecha_unica, false);
+            // 1. Nos aseguramos de tener una hora válida, si no viene del front, usamos 00:00
+            const horaSegura = hora_programada ? hora_programada.substring(0, 5) : '00:00';
 
+            // 2. Calculamos la próxima ejecución
+            let proxima = calcularProximaEjecucion(frecuencia, horaSegura, dias_especificos, fecha_unica, false);
+
+            // Si es Fecha Única y la función de cálculo falló, armamos el string manualmente
             if (frecuencia === 'Fecha Unica' && !proxima && fecha_unica) {
-                proxima = `${fecha_unica} ${hora_programada}`;
+                proxima = `${fecha_unica} ${horaSegura}`;
             }
+
             const diasJson = dias_especificos ? JSON.stringify(dias_especificos) : '[]';
 
+            // 3. Hacemos el UPDATE en la base de datos
             const query = `
               UPDATE tareas_diarias 
-              SET titulo = ?, categoria = ?, frecuencia = ?, hora_programada = ?, proxima_ejecucion = ?, dias_especificos = ?, fecha_unica = ?
+              SET titulo = ?, categoria = ?, frecuencia = ?, hora_programada = ?, proxima_ejecucion = ?, dias_especificos = ?, fecha_unica = ?, descripcion = ?
               WHERE id = ? AND status = 1
             `;
 
-            const [result] = await pool.query(query, [titulo, categoria, frecuencia, hora_programada, proxima, diasJson, fecha_unica || null, id]);
+            const [result] = await pool.query(query, [
+                titulo,
+                categoria,
+                frecuencia,
+                horaSegura, // Guardamos la hora limpia
+                proxima,    // Guardamos la nueva fecha calculada
+                diasJson,
+                fecha_unica || null,
+                descripcion || null,
+                id
+            ]);
+
             if (result.affectedRows === 0) return res.status(404).json({ error: "Tarea no encontrada en la BD" });
 
+            // 4. Traemos la tarea actualizada y la emitimos por WebSockets
             const [tareas] = await pool.query('SELECT * FROM tareas_diarias WHERE id = ? AND status = 1', [id]);
 
             io.emit('tareaModificada', tareas[0]);
             res.json(tareas[0]);
+
         } catch (error) {
             console.error("❌ Error al editar la tarea:", error);
             res.status(500).json({ error: "Error en el servidor al actualizar la tarea" });
@@ -363,7 +384,7 @@ export default function tareaRoutes(io) {
             // B. Tareas Atrasadas (Ignorando las borradas Y las que ya están en curso/completadas)
             const [atrasadas] = await pool.query(`
         SELECT COUNT(*) as total FROM tareas_diarias 
-        WHERE IFNULL(proxima_ejecucion, CONCAT(fecha_unica, ' ', hora_programada)) < NOW() 
+        WHERE DATE(IFNULL(proxima_ejecucion, CONCAT(fecha_unica, ' ', hora_programada))) < CURDATE() 
           AND status = 1 
           AND (estado IS NULL OR estado = 'Pendiente')
     `);
@@ -371,7 +392,7 @@ export default function tareaRoutes(io) {
             // C. Tareas Próximas (Ignorando las borradas Y finalizadas)
             const [proximas] = await pool.query(`
         SELECT COUNT(*) as total FROM tareas_diarias 
-        WHERE IFNULL(proxima_ejecucion, CONCAT(fecha_unica, ' ', hora_programada)) >= NOW() 
+        WHERE DATE(IFNULL(proxima_ejecucion, CONCAT(fecha_unica, ' ', hora_programada))) >= CURDATE() 
           AND status = 1 
           AND (estado IS NULL OR estado = 'Pendiente')
     `);

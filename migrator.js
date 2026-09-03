@@ -57,6 +57,10 @@ const ejecutarMigraciones = async () => {
             '📹 CCTV y Servidores',
             '🌐 Redes',
             '📊 Reportes',
+            '🚨 Alarmas',
+            '⚡ Cercos eléctricos',
+            '🔐 Sistemas de Acceso',
+            '⚙️ Procesos',
         ];
 
         console.log("♻️  Sincronizando categorías de rutinas...");
@@ -81,6 +85,7 @@ const ejecutarMigraciones = async () => {
         const frecuenciasMaestras = [
             ['Dias Especificos', '📅 Días Específicos'],
             ['Fecha Unica', '🎯 Fecha Única'],
+            ['Quincenal', ' Quincenal'],
         ];
 
         console.log("♻️  Sincronizando frecuencias permitidas...");
@@ -110,6 +115,7 @@ const ejecutarMigraciones = async () => {
         const frecuenciasCompletas = [
             ['Diaria', 'Todos los días', 0],
             ['Semanal', 'Una vez por semana', 0],
+            ['Quincenal', 'Cada 15 días', 1],
             ['Mensual', 'Una vez al mes', 0],
             ['Bimestral', 'Cada 2 meses', 0],
             ['Trimestral', 'Cada 3 meses', 0],
@@ -455,7 +461,74 @@ const ejecutarMigraciones = async () => {
         } else {
             console.log("✏️  La columna 'usuario_asignado' en tareas_diarias ya existe, saltando...");
         }
+        // ─────────────────────────────────────────────────────────────────────
+        // 23. Tabla 'solicitudes' (Tablero Padre de Altas de Servicio)
+        // ─────────────────────────────────────────────────────────────────────
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS solicitudes (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                titulo VARCHAR(255) NOT NULL,
+                ubicacion VARCHAR(255) NULL,
+                fecha_limite DATETIME NULL,
+                creador_usuario VARCHAR(100) NOT NULL,
+                estado_global VARCHAR(50) DEFAULT 'Pendiente',
+                cliente_id INT NULL,
+                status INT DEFAULT 1,
+                fecha_creacion TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (cliente_id) REFERENCES clientes(id) ON DELETE SET NULL
+            )
+        `);
+        console.log("✅ Tabla 'solicitudes' verificada/creada.");
 
+        // ─────────────────────────────────────────────────────────────────────
+        // 24. Tabla 'solicitud_tarjetas' (Tareas / Tarjetas por Área)
+        // ─────────────────────────────────────────────────────────────────────
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS solicitud_tarjetas (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                solicitud_id INT NOT NULL,
+                id_area INT NOT NULL,
+                descripcion TEXT NOT NULL,
+                tecnico_asignado VARCHAR(100) NULL,
+                estado_tarjeta VARCHAR(50) DEFAULT 'Pendiente',
+                status INT DEFAULT 1,
+                fecha_creacion TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (solicitud_id) REFERENCES solicitudes(id) ON DELETE CASCADE,
+                FOREIGN KEY (id_area) REFERENCES areas(id) ON DELETE CASCADE
+            )
+        `);
+        console.log("✅ Tabla 'solicitud_tarjetas' verificada/creada.");
+
+        // ─────────────────────────────────────────────────────────────────────
+        // 25. Tabla 'solicitud_chat' (Comunicación dentro de la tarjeta)
+        // ─────────────────────────────────────────────────────────────────────
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS solicitud_chat (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                tarjeta_id INT NOT NULL,
+                autor VARCHAR(100) NOT NULL,
+                mensaje TEXT NOT NULL,
+                archivo_adjunto JSON NULL,
+                status INT DEFAULT 1,
+                fecha_creacion TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (tarjeta_id) REFERENCES solicitud_tarjetas(id) ON DELETE CASCADE
+            )
+        `);
+        console.log("✅ Tabla 'solicitud_chat' verificada/creada.");
+
+        // ─────────────────────────────────────────────────────────────────────
+        // 26. Columna 'instrucciones_tarea' en 'historial_tareas'
+        // ─────────────────────────────────────────────────────────────────────
+        const [colInstrucciones] = await pool.query(
+            "SHOW COLUMNS FROM historial_tareas LIKE 'instrucciones_tarea'"
+        );
+        if (colInstrucciones.length === 0) {
+            console.log("⚠️  Columna 'instrucciones_tarea' no encontrada en historial_tareas. Agregándola...");
+            await pool.query(
+                "ALTER TABLE historial_tareas ADD COLUMN instrucciones_tarea TEXT AFTER titulo_tarea"
+            );
+            console.log("✅ Columna 'instrucciones_tarea' agregada a historial_tareas.");
+        }
 
     } catch (error) {
         console.error("❌ Error en la migración automática:", error);

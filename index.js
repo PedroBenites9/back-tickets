@@ -18,6 +18,7 @@ import tareaRoutes from './routes/tareas.js';
 import usuarioRoutes from './routes/usuarios.js';
 import clienteRoutes from './routes/clientes.js';
 import systemRoutes from './routes/system.js';
+import solicitudesRoutes from './routes/solicitudes.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -74,6 +75,7 @@ app.use('/api/tareas', tareaRoutes(io));
 app.use('/api/usuarios', usuarioRoutes);
 app.use('/api/clientes', clienteRoutes);
 app.use('/api', systemRoutes);
+app.use('/api/solicitudes', solicitudesRoutes(io));
 
 // Manejar rutas del frontend (SPA)
 app.get('*', (req, res) => {

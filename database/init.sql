@@ -99,6 +99,7 @@ CREATE TABLE tickets (
 CREATE TABLE tareas_diarias (
     id INT AUTO_INCREMENT PRIMARY KEY,
     titulo VARCHAR(255) NOT NULL,
+    descripcion TEXT,
     categoria VARCHAR(100) NOT NULL,
     frecuencia VARCHAR(50) NOT NULL,
     hora_programada VARCHAR(10) NOT NULL,
@@ -111,7 +112,8 @@ CREATE TABLE tareas_diarias (
     tiempo_acumulado_minutos FLOAT DEFAULT 0,
     hora_primer_inicio DATETIME,
     status INT DEFAULT 1,
-    ultima_vez_completada DATETIME
+    ultima_vez_completada DATETIME,
+    usuario_asignado VARCHAR(100) DEFAULT NULL
 );
 
 -- Tabla para registrar qué usuario ya vio una tarea (Para notificaciones/globito rojo)
@@ -145,11 +147,14 @@ CREATE TABLE historial_tareas (
     id INT AUTO_INCREMENT PRIMARY KEY,
     tarea_id INT NOT NULL,
     titulo_tarea VARCHAR(255) NOT NULL,
+    instrucciones_tarea TEXT,
     usuario_que_completo VARCHAR(100),
     tiempo_total_minutos FLOAT DEFAULT 0,
     fecha_inicio DATETIME,
     status INT DEFAULT 1,
     fecha_completada TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    comentario TEXT,
+    archivo_adjunto TEXT,
     CONSTRAINT fk_tarea_historial FOREIGN KEY (tarea_id) 
         REFERENCES tareas_diarias(id) ON DELETE CASCADE
 );
@@ -177,12 +182,17 @@ INSERT IGNORE INTO categorias_rutinas (nombre) VALUES
 ('🧹 Limpieza / General'), 
 ('📹 CCTV y Servidores'), 
 ('🌐 Redes'), 
-('📊 Reportes');
+('📊 Reportes'),
+('🚨 Alarmas'),
+('⚡ Cercos eléctricos'),
+('🔐 Sistemas de Acceso'),
+('⚙️ Procesos');
 
--- Frecuencias con Emojis y Lógica de Negocio
+-- Frecuencias con Emojis y Lógica
 INSERT IGNORE INTO frecuencias_permitidas (codigo, nombre_mostrar) VALUES 
 ('Diaria', '🔄 Todos los días'),
 ('Semanal', '📆 Una vez por semana'),
+('Quincenal', '📆 Cada 15 días'),
 ('Mensual', '📅 Una vez al mes'),
 ('Bimestral', '🗓️ Cada 2 meses'),
 ('Trimestral', '📊 Cada 3 meses'),
